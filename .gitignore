@@ -1,0 +1,55 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*.egg-info/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Logs
+*.log
+
+# Secrets
+gee_key/
+data/gee_key/
+
+# Large local datasets
+data/
+
+# Vendored model repos / weights
+models/
+*.ckpt
+*.safetensors
+*.onnx
+
+# Runtime caches / outputs
+tool_server/tool_workers/cache/
+tool_server/tool_workers/cache_dir/
+tool_server/tool_workers/logs/
+tool_server/tool_workers/tools_output/
+tool_server/tool_workers/online_workers/controller_addr/
+tool_server/tool_workers/mask_*.png
+tool_server/tool_workers/symbology-style.db
+tool_server/tool_workers/~/
+
+# GIS sidecar files
+*.aux.xml
+*.gpkg-shm
+*.gpkg-wal

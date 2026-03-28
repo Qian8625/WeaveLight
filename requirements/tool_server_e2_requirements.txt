@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+einops
+peft
+transformers
+decord
+pytorchvideo
+numpy
+datasets
+sentencepiece
+protobuf
+accelerate
+bitsandbytes
+opencv-python
+shapely

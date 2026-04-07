@@ -278,4 +278,13 @@ tool_worker_config:
           script-addr: ./online_workers/TVDIAnalysis_worker.py 
           port: 20025 
           host: "0.0.0.0"
+
+  - SliceGeoTIFF:
+        worker_name: SliceGeoTIFF
+        job_name: slice_geotiff
+        calculate_type: control
+        cmd:
+          script-addr: ./online_workers/SliceGeoTIFF_worker.py
+          port: 20026
+          host: "0.0.0.0"
     

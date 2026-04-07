@@ -30,6 +30,9 @@ ENV/
 gee_key/
 data/gee_key/
 
+# Temp code
+tempcode/
+
 # Large local datasets
 data/
 

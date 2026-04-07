@@ -5,7 +5,7 @@ export PYTHONPATH="$(pwd)"
 # =========================
 # GPU / CUDA
 # =========================
-export CUDA_VISIBLE_DEVICES=0,1,2,3
+export CUDA_VISIBLE_DEVICES=0,1
 export TORCH_CUDA_ARCH_LIST="8.0"
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export TORCH_NCCL_BLOCKING_WAIT=1
@@ -15,8 +15,8 @@ export NCCL_DEBUG=WARN
 # =========================
 # Paths
 # =========================
-export OUTPUT_DIR="OpenEarthAgent"
-export MODEL_PATH="unsloth/Qwen3-4B-Instruct-2507"
+export OUTPUT_DIR="OpenEarthAgent/train_cpk/"
+export MODEL_PATH="/home/ubuntu/00_CPK/Qwen3-VL-4B-Instruct"
 export DATA_PATH="data/train.json"
 
 # =========================
@@ -28,7 +28,7 @@ export SEED=42
 # =========================
 # Distributed setup
 # =========================
-GPUS_PER_NODE=4
+GPUS_PER_NODE=2
 NNODES=1
 NODE_RANK=0
 MASTER_ADDR=localhost
@@ -45,7 +45,7 @@ DISTRIBUTED_ARGS="
 # =========================
 # Launch
 # =========================
-torchrun $DISTRIBUTED_ARGS scripts/train.py \
+torchrun $DISTRIBUTED_ARGS scripts/train/train.py \
   --output_dir ${OUTPUT_DIR} \
   --model_name_or_path ${MODEL_PATH} \
   --data_files ${DATA_PATH} \

@@ -80,7 +80,7 @@ def handle_upload(image_path):
 # ---------------------------------------------------------
 # Load model + tools ONCE (important)
 # ---------------------------------------------------------
-PRETRAINED_PATH = "MBZUAI/OpenEarthAgent"
+PRETRAINED_PATH = "/home/ubuntu/00_CPK/OpenEarthAgent"
 
 Model = LLM(PRETRAINED_PATH)
 tool_manager = ToolManager()
@@ -197,7 +197,7 @@ def run_agent(user_question, input_image, original_tif):
 # ---------------------------------------------------------
 # Gradio UI
 # ---------------------------------------------------------
-logo_path = "./assets/OpenEarthAgent_logo_transparent.png"
+logo_path = "./assets/nwpu-logo.svg"
 
 with gr.Blocks() as demo:
     original_tif_state = gr.State()
@@ -206,7 +206,7 @@ with gr.Blocks() as demo:
         gr.Markdown("""
         <div style="text-align:center;">
             <h2 style="margin-top:-5px; margin-bottom:5px;">
-                A Unified Framework for Tool-Augmented Geospatial Agents
+                WeavLight
             </h2>
             <h1 style="margin-top:0px;">
                 Demo (Live)

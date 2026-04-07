@@ -52,7 +52,7 @@ class ToolManager(object):
             
 
         miss_tool = []
-        for tool in ['RegionAttributeDescription', 'OCR', 'DrawBox', 'Plot', 'AddPoisLayer', 'GetAreaBoundary', 'ChangeDetection', 'Solver', 'SegmentObjectPixels', 'AddText', 'ObjectDetection', 'GoogleSearch', 'BaseModel', 'CountGivenObject', 'Calculator']:
+        for tool in ['RegionAttributeDescription', 'OCR', 'DrawBox', 'Plot', 'AddPoisLayer', 'GetAreaBoundary', 'ChangeDetection', 'Solver', 'SegmentObjectPixels', 'AddText', 'ObjectDetection', 'GoogleSearch', 'BaseModel', 'CountGivenObject', 'Calculator','SARDualFreqDiff','TVDIAnalysis']:
             if tool not in self.available_online_tools:
                 miss_tool.append(tool)
         if len(miss_tool) == 0:

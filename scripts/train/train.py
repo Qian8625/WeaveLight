@@ -110,11 +110,28 @@ def main(script_args, model_args, training_args):
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=model_args.model_name_or_path,
         max_seq_length=training_args.max_seq_length,
-        load_in_4bit=False,
+        load_in_4bit=True,
         load_in_8bit=False,
-        full_finetuning=True,
+        full_finetuning=False,
         device_map={"": local_rank},
     )
+
+    # -------------------------
+    # LoRA 配置 
+    # -------------------------
+    model = FastLanguageModel.get_peft_model(
+        model,
+        r = 16, # LoRA Rank，可选 8, 16, 32, 64 等
+        target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
+                        "gate_proj", "up_proj", "down_proj",],
+        lora_alpha = 16,
+        lora_dropout = 0, # 保持 0 以获得最佳性能
+        bias = "none",    # 保持 "none" 以获得最佳性能
+        use_gradient_checkpointing = "unsloth", # 节省显存的关键
+        random_state = 3407,
+        use_rslora = False,
+        loftq_config = None,
+        )
 
     # Apply Qwen-style chat template
     tokenizer = get_chat_template(

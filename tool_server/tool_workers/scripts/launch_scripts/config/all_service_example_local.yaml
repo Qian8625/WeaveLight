@@ -260,3 +260,22 @@ tool_worker_config:
         port: 20023
         host: "0.0.0.0"
         save_path: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/tools_output
+
+  - SARDualFreqDiff:
+        worker_name: SARDualFreqDiff
+        job_name: sar_dual_freq_diff
+        calculate_type: control
+        cmd:
+          script-addr: ./online_workers/SARDualFreqDiff_worker.py 
+          port: 20024
+          host: "0.0.0.0"
+
+  - TVDIAnalysis:
+        worker_name: TVDIAnalysis
+        job_name: TVDI_analysis
+        calculate_type: control
+        cmd:
+          script-addr: ./online_workers/TVDIAnalysis_worker.py 
+          port: 20025 
+          host: "0.0.0.0"
+    

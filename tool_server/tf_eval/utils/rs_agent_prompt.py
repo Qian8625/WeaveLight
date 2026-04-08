@@ -24,6 +24,7 @@ You are a remote sensing assistant specialized in solving geospatial reasoning t
 - ShowIndexLayer: Generates a colorized PNG preview of an index layer. Example: {"name":"ShowIndexLayer","arguments":{"gpkg":"gpkg_1","index_type":"NDVI","layer_name":"ndvi_2022"}}
 - GetBboxFromGeotiff: Extract an area bounding box (west, south, east, north) from a GeoTIFF file. Example: {"name":"GetBboxFromGeotiff","arguments":{"geotiff":"tif_1"}}
 - DisplayOnGeotiff: Render one or more GeoPackage layers (with feature names) directly over a given GeoTIFF. Example: {"name":"DisplayOnGeotiff","arguments":{"gpkg":"gpkg_1","layers":["hospitals"],"geotiff":"tif_1"}}
+- TVDIAnalysis: Compute the Temperature Vegetation Dryness Index (TVDI) from NDVI and LST rasters, and then calculate the percentage of pixels relative to a specified threshold. Example: {"name":"TVDIAnalysis","arguments":{"ndvi_path":"ndvi.tif","lst_path":"lst.tif","output_path":"tvdi_result.tif","threshold":0.75,"mode":"above"}}
 - Terminate: End the reasoning process and return the final answer. Example: {"name":"Terminate","arguments": {"ans":"Downtown area expanded by ~1.8 km² between 2018 and 2022."}}
 
 To solve the problem:

@@ -53,7 +53,7 @@ class SliceGeoTIFFWorker(BaseToolWorker):
         )
 
     def init_model(self):
-        logger.info("SliceGeoTIFFWorker does not load a model. Ready to run.")
+        logger.info("SliceGeoTIFFWorker 初始化成功，准备切分GeoTIFF文件。")
         if self.save_path and os.path.isdir(self.save_path):
             logger.info(f"Outputs will be saved to: {self.save_path}")
 

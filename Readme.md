@@ -18,7 +18,7 @@
         for tool in ['RegionAttributeDescription', 'OCR', 'DrawBox', 'Plot', 'AddPoisLayer', 'GetAreaBoundary', 'ChangeDetection', 'Solver', 'SegmentObjectPixels', 'AddText', 'ObjectDetection', 'GoogleSearch', 'BaseModel', 'CountGivenObject', 'Calculator', 'SARDualFreqDiff']: # <- 添加在这里
             if tool not in self.available_online_tools:
                 miss_tool.append(tool)
-    # (2) 配置超时时间
+    # (2) 配置超时时间（可以不配置）
     def call_tool(self,tool_name,params):
         if tool_name in ["AddPoisLayer","ComputeDistance"]:
             timeout_sec = 180
@@ -29,3 +29,11 @@
             timeout_sec = 120
         else:
             timeout_sec = 60  # timeout per attempt
+ 
+3. 采用代码 /home/ubuntu/01_Code/OpenEarthAgent/scripts/tools_test/tools_single_test.py 测试工具效果（注意参考tools的 input和output修改输入输出）
+    # 测试成功之后，将对应的模块添加到 scripts/tools_test/tools_test.py 中，补全all工具的测试代码
+4. 在 /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tf_eval/utils/rs_agent_prompt.py 中添加模块描述，让Agent理解模块的效果和输入输出
+    # 
+5. 在 app/app_new.py文件中添加相关的示例进行测试（保存图片为png格式，tiff格式有点问题）
+    # 
+

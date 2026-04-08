@@ -36,6 +36,11 @@ tempcode/
 # Large local datasets
 data/
 
+*.png
+*.tif
+*.tiff
+*.gpkg
+
 # Vendored model repos / weights
 models/
 *.ckpt

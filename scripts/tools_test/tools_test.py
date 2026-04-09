@@ -122,6 +122,13 @@ def main():
             "year": 2025
         }),
 
+        ("AddDEMLayer", {
+            "gpkg": abs_path("tools_test_images/aoi_1.gpkg"),
+            "dem_layer_name": "dem_30m",
+            "contour_interval_m": 20,
+            "band_step_m": 100
+        }),
+
         ("ComputeIndexChange", {
             "gpkg": abs_path("tools_test_images/aoi_1.gpkg"),
             "index_type": "NDVI",

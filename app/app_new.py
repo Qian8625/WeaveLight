@@ -116,6 +116,7 @@ GPKG_REQUIRED_TOOLS = {
     "ComputeDistance",
     "DisplayOnMap",
     "AddIndexLayer",
+    "AddDEMLayer",
     "ComputeIndexChange",
     "ShowIndexLayer",
     "DisplayOnGeotiff",
@@ -1049,6 +1050,20 @@ with gr.Blocks(title="WeavLight Demo", css=css) as demo:
                                     make_example(
                                         "Locate and estimate the distance between aircrafts in the scene. Assuming GSD 0.6 px/meter",
                                         primary_image="./assets/TG_P0009.png",
+                                    ),
+                                ],
+                                inputs=example_inputs,
+                                preprocess=False,
+                            )
+
+                        with gr.Tab("Terrain / DEM"):
+                            gr.Examples(
+                                examples=[
+                                    make_example(
+                                        "For Manchester State Forest, South Carolina, United States, create a DEM layer from GEE, generate 20 m contours and 100 m elevation bands, and summarize the elevation range."
+                                    ),
+                                    make_example(
+                                        "For the area within a 1000 m radius of Edinburgh Castle, generate a DEM layer, create contour lines, and visualize the resulting terrain bands on the map."
                                     ),
                                 ],
                                 inputs=example_inputs,

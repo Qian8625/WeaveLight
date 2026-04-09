@@ -90,7 +90,7 @@ IMAGE_REQUIRED_TOOLS = [ "OCR", "DrawBox", "AddText", "TextToBbox","CountGivenOb
                         "SegmentObjectPixels","ObjectDetection","GetBboxFromGeotiff","DisplayOnGeotiff"
                     ]
 GPKG_REQUIRED_TOOLS = [ "AddPoisLayer","ComputeDistance","DisplayOnMap","AddIndexLayer",
-                        "ComputeIndexChange","ShowIndexLayer","DisplayOnGeotiff"
+                        "AddDEMLayer","ComputeIndexChange","ShowIndexLayer","DisplayOnGeotiff"
                     ]
 
 # ---------------------------------------------------------

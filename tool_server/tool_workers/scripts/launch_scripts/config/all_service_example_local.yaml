@@ -242,6 +242,17 @@ tool_worker_config:
         service_account: "gee-key@velvety-being-491207-h2.iam.gserviceaccount.com"
         key_file: /home/ubuntu/01_Code/OpenEarthAgent/gee_key/my-project-1.json
 
+  - AddDEMLayer:
+      worker_name: AddDEMLayer
+      job_name: add_dem_layer
+      calculate_type: control
+      cmd:
+        script-addr: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/online_workers/AddDEMLayer_worker.py
+        port: 20027
+        host: "0.0.0.0"
+        service_account: "gee-key@velvety-being-491207-h2.iam.gserviceaccount.com"
+        key_file: /home/ubuntu/01_Code/OpenEarthAgent/gee_key/my-project-1.json
+
   - ComputeIndexChange:
       worker_name: ComputeIndexChange
       job_name: compute_index_change

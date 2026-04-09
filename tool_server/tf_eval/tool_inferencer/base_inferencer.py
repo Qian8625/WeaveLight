@@ -159,6 +159,7 @@ class BaseToolInferencer(object):
                         "ComputeDistance",
                         "DisplayOnMap",
                         "AddIndexLayer",
+                        "AddDEMLayer",
                         "ComputeIndexChange",
                         "ShowIndexLayer",
                         "DisplayOnGeotiff"

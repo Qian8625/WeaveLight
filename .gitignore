@@ -61,3 +61,4 @@ tool_server/tool_workers/~/
 *.aux.xml
 *.gpkg-shm
 *.gpkg-wal
+.codex

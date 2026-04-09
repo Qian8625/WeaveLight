@@ -24,7 +24,7 @@ TOOLS_LIST = ["Calculator","OCR","DrawBox","AddText","GoogleSearch","Plot","Solv
     "TextToBbox","ImageDescription","RegionAttributeDescription","CountGivenObject",
     "ChangeDetection","SegmentObjectPixels","ObjectDetection",
     "GetAreaBoundary","AddPoisLayer","ComputeDistance","DisplayOnMap",
-    "AddIndexLayer","ComputeIndexChange","ShowIndexLayer",
+    "AddIndexLayer","AddDEMLayer","ComputeIndexChange","ShowIndexLayer",
     "GetBboxFromGeotiff","DisplayOnGeotiff","Terminate"
 ]
 
@@ -179,7 +179,7 @@ def gettype(name: str):
     perception = ['OCR', 'ImageDescription', 'RegionAttributeDescription', 'TextToBbox', 'ChangeDetection', 'ObjectDetection', 'SegmentObjectPixels', 'CountGivenObject']
     operation = ['DrawBox', 'AddText', 'GoogleSearch']
     logic = ['Calculator', 'Solver', 'Plot']  
-    gis = ["GetAreaBoundary", "AddPoisLayer", "ComputeDistance", "DisplayOnMap", "AddIndexLayer", "ComputeIndexChange", "ShowIndexLayer", 'GetBboxFromGeotiff', "DisplayOnGeotiff"]
+    gis = ["GetAreaBoundary", "AddPoisLayer", "ComputeDistance", "DisplayOnMap", "AddIndexLayer", "AddDEMLayer", "ComputeIndexChange", "ShowIndexLayer", 'GetBboxFromGeotiff', "DisplayOnGeotiff"]
     terminate = ["Terminate"]
     if name in perception:
         return 'perception'

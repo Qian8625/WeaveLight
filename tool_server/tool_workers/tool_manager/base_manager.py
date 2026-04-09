@@ -52,7 +52,7 @@ class ToolManager(object):
             
 
         miss_tool = []
-        for tool in ['RegionAttributeDescription', 'OCR', 'DrawBox', 'Plot', 'AddPoisLayer', 'GetAreaBoundary', 'ChangeDetection', 'Solver', 'SegmentObjectPixels', 'AddText', 'ObjectDetection', 'GoogleSearch', 'BaseModel', 'CountGivenObject', 'Calculator', 'SARDualFreqDiff', 'TVDIAnalysis', 'SliceGeoTIFF']:
+        for tool in ['RegionAttributeDescription', 'OCR', 'DrawBox', 'Plot', 'AddPoisLayer', 'GetAreaBoundary', 'ChangeDetection', 'Solver', 'SegmentObjectPixels', 'AddText', 'ObjectDetection', 'GoogleSearch', 'BaseModel', 'CountGivenObject', 'Calculator', 'SARDualFreqDiff', 'TVDIAnalysis', 'SliceGeoTIFF', 'AddDEMLayer']:
             if tool not in self.available_online_tools:
                 miss_tool.append(tool)
         if len(miss_tool) == 0:
@@ -79,7 +79,7 @@ class ToolManager(object):
     def call_tool(self,tool_name,params):
         if tool_name in ["AddPoisLayer","ComputeDistance"]:
             timeout_sec = 180
-        elif tool_name in ["AddIndexLayer"]:
+        elif tool_name in ["AddIndexLayer", "AddDEMLayer"]:
             timeout_sec = 300
         elif tool_name in ["ChangeDetection", "GetAreaBoundary"]:
             timeout_sec = 120

@@ -229,6 +229,17 @@ tool_worker_config:
         service_account: "<service_account>"
         key_file: OpenEarthAgent/gee_key/<key_file>
 
+  - AddDEMLayer:
+      worker_name: AddDEMLayer
+      job_name: add_dem_layer
+      calculate_type: control
+      cmd:
+        script-addr: ./online_workers/AddDEMLayer_worker.py
+        port: 20027
+        host: "0.0.0.0"
+        service_account: "<service_account>"
+        key_file: OpenEarthAgent/gee_key/<key_file>
+
   - ComputeIndexChange:
       worker_name: ComputeIndexChange
       job_name: compute_index_change

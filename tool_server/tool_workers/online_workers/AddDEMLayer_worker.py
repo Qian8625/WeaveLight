@@ -21,15 +21,23 @@ from tool_server.tool_workers.online_workers.base_tool_worker import BaseToolWor
 from tool_server.utils.server_utils import build_logger
 
 
-DEFAULT_DEM_SOURCE = "USGS/SRTMGL1_003"
+DEFAULT_DEM_SOURCE = "MERIT/DEM/v1_0_3"
 DEFAULT_NODATA = -32768
 DEFAULT_CONTOUR_MIN_LENGTH_M = 60.0
 DEFAULT_CONTOUR_SIMPLIFY_M = 15.0
+DEFAULT_BAND_MIN_AREA_PIXEL_FACTOR = 0.5
 SUPPORTED_DEM_SOURCES = {
     "USGS/SRTMGL1_003": {
         "ee_path": "USGS/SRTMGL1_003",
         "band": "elevation",
         "description": "SRTM 30m DEM",
+        "native_resolution_m": 30.0,
+    },
+    "MERIT/DEM/v1_0_3": {
+        "ee_path": "MERIT/DEM/v1_0_3",
+        "band": "dem",
+        "description": "MERIT DEM (~90m)",
+        "native_resolution_m": 92.77,
     }
 }
 
@@ -65,6 +73,22 @@ def _explode_lines(gdf):
 def _drop_empty_geometries(gdf):
     mask = gdf.geometry.apply(lambda geom: geom is not None and not geom.is_empty)
     return gdf[mask].copy()
+
+
+def _make_valid_geometries(gdf):
+    try:
+        fixed = gdf.geometry.make_valid()
+    except Exception:
+        fixed = gdf.geometry.buffer(0)
+    gdf = gdf.copy()
+    gdf["geometry"] = fixed
+    return _drop_empty_geometries(gdf)
+
+
+def _get_export_resolution_m(dem_source, requested_resolution_m):
+    source_cfg = SUPPORTED_DEM_SOURCES[dem_source]
+    native_resolution_m = float(source_cfg.get("native_resolution_m", requested_resolution_m))
+    return max(float(requested_resolution_m), native_resolution_m)
 
 
 def _postprocess_contours(gpkg, layer_name, min_length_m=DEFAULT_CONTOUR_MIN_LENGTH_M, simplify_m=DEFAULT_CONTOUR_SIMPLIFY_M):
@@ -153,11 +177,12 @@ def _export_dem_to_tif(gpkg, dem_source, resolution_m, tif_path):
     geom = _load_aoi_geometry(gpkg)
     aoi = ee.Geometry(geom.__geo_interface__)
     source_cfg = SUPPORTED_DEM_SOURCES[dem_source]
+    export_resolution_m = _get_export_resolution_m(dem_source, resolution_m)
     dem_image = ee.Image(source_cfg["ee_path"]).select(source_cfg["band"]).clip(aoi)
     geemap.ee_export_image(
         dem_image,
         filename=tif_path,
-        scale=resolution_m,
+        scale=export_resolution_m,
         region=aoi,
         file_per_band=False,
         crs="EPSG:4326",
@@ -167,6 +192,7 @@ def _export_dem_to_tif(gpkg, dem_source, resolution_m, tif_path):
     )
     if not os.path.isfile(tif_path):
         raise RuntimeError(f"DEM export failed: {tif_path} was not created")
+    return export_resolution_m
 
 
 def _read_dem_stats(tif_path):
@@ -311,29 +337,65 @@ def _polygonize_band_raster(band_tif_path, raw_gpkg_path, raw_layer_name):
         raster_ds = None
 
 
-def _create_elevation_bands(dem_tif_path, gpkg, layer_name, band_step_m, band_tif_path, raw_gpkg_path):
-    base_elev = _build_band_raster(dem_tif_path, band_tif_path, band_step_m)
-    raw_layer_name = "raw_elevation_bands"
-    _polygonize_band_raster(band_tif_path, raw_gpkg_path, raw_layer_name)
-
-    gdf = gpd.read_file(raw_gpkg_path, layer=raw_layer_name)
+def _postprocess_elevation_bands(gdf, gpkg, band_step_m, base_elev, resolution_m):
     if gdf.empty:
         raise ValueError("No elevation-band polygons were generated")
 
+    aoi_geom = _load_aoi_geometry(gpkg)
+    if gdf.crs is None:
+        gdf = gdf.set_crs("EPSG:4326")
+    elif gdf.crs.to_string() != "EPSG:4326":
+        gdf = gdf.to_crs("EPSG:4326")
+
     gdf = gdf[gdf["band_id"] > 0].copy()
     gdf["band_id"] = gdf["band_id"].astype(int)
-    gdf = gdf[gdf.geometry.notna()]
-    gdf = gdf[~gdf.geometry.is_empty]
+    gdf = _drop_empty_geometries(gdf)
     if gdf.empty:
         raise ValueError("Elevation-band polygons only contained nodata regions")
 
+    gdf["geometry"] = gdf.geometry.intersection(aoi_geom)
+    gdf = _drop_empty_geometries(gdf)
+    gdf = _make_valid_geometries(gdf)
+    gdf = gdf.explode(index_parts=False).reset_index(drop=True)
+    gdf = _drop_empty_geometries(gdf)
+
+    metric_crs = gdf.estimate_utm_crs() or "EPSG:3857"
+    gdf_metric = gdf.to_crs(metric_crs)
+    gdf_metric = _make_valid_geometries(gdf_metric)
+    gdf_metric = gdf_metric[gdf_metric.geometry.area > 0].copy()
+    min_area_m2 = max(float(resolution_m) ** 2 * DEFAULT_BAND_MIN_AREA_PIXEL_FACTOR, 1.0)
+    gdf_metric = gdf_metric[gdf_metric.geometry.area >= min_area_m2].copy()
+    if gdf_metric.empty:
+        raise ValueError("Elevation-band polygons only contained tiny artifacts after clipping to the AOI")
+
+    gdf_metric = gdf_metric.dissolve(by="band_id", as_index=False)
+    gdf = gdf_metric.to_crs("EPSG:4326")
+    gdf["geometry"] = gdf.geometry.intersection(aoi_geom)
+    gdf = _drop_empty_geometries(gdf)
+    gdf = _make_valid_geometries(gdf)
     gdf = gdf.dissolve(by="band_id", as_index=False)
+    gdf = _drop_empty_geometries(gdf)
+    gdf = gdf[gdf.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
+    if gdf.empty:
+        raise ValueError("Elevation-band polygons produced no valid polygon features after cleanup")
+
+    gdf["band_id"] = gdf["band_id"].astype(int)
     gdf["elev_min"] = base_elev + (gdf["band_id"] - 1) * band_step_m
     gdf["elev_max"] = gdf["elev_min"] + band_step_m
     gdf["band_label"] = gdf.apply(
         lambda row: f"[{int(row['elev_min'])}, {int(row['elev_max'])}) m",
         axis=1,
     )
+    return gdf
+
+
+def _create_elevation_bands(dem_tif_path, gpkg, layer_name, band_step_m, resolution_m, band_tif_path, raw_gpkg_path):
+    base_elev = _build_band_raster(dem_tif_path, band_tif_path, band_step_m)
+    raw_layer_name = "raw_elevation_bands"
+    _polygonize_band_raster(band_tif_path, raw_gpkg_path, raw_layer_name)
+
+    gdf = gpd.read_file(raw_gpkg_path, layer=raw_layer_name)
+    gdf = _postprocess_elevation_bands(gdf, gpkg, band_step_m, base_elev, resolution_m)
 
     _delete_vector_layer(gpkg, layer_name)
     gdf.to_file(gpkg, layer=layer_name, driver="GPKG")
@@ -385,7 +447,7 @@ def AddDEMLayer(
     raw_bands_gpkg = os.path.join(work_dir, f"_add_dem_bands_{temp_id}.gpkg")
 
     try:
-        _export_dem_to_tif(gpkg, dem_source, resolution_m, dem_tif_path)
+        used_resolution_m = _export_dem_to_tif(gpkg, dem_source, resolution_m, dem_tif_path)
         elev_min, elev_max = _read_dem_stats(dem_tif_path)
         contour_count = _create_contours(dem_tif_path, gpkg, contour_layer_name, contour_interval_m)
         band_count = _create_elevation_bands(
@@ -393,6 +455,7 @@ def AddDEMLayer(
             gpkg,
             band_layer_name,
             band_step_m,
+            used_resolution_m,
             band_tif_path,
             raw_bands_gpkg,
         )
@@ -400,6 +463,7 @@ def AddDEMLayer(
         gpkg_name = os.path.basename(gpkg)
         summary = (
             f"DEM from {dem_source} analyzed for {gpkg_name} (temporary raster not persisted)\n"
+            f"DEM export resolution used: {used_resolution_m:g} m\n"
             f"Elevation range inside AOI: {elev_min:.2f} m to {elev_max:.2f} m\n"
             f"Contour layer '{contour_layer_name}' created with interval {float(contour_interval_m):g} m "
             f"({contour_count} features)\n"
@@ -557,7 +621,7 @@ class AddDEMLayerWorker(BaseToolWorker):
                         },
                         "resolution_m": {
                             "type": "number",
-                            "description": "DEM export resolution in meters. Default is 30.",
+                            "description": "Requested DEM export resolution in meters. Values finer than the source DEM's native resolution are clamped upward.",
                         },
                         "contour_interval_m": {
                             "type": "number",

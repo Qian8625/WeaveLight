@@ -142,6 +142,7 @@ def main():
 
         ("AddDEMLayer", {
             "gpkg": aoi_1_dem_gpkg,
+            "dem_source": "MERIT/DEM/v1_0_3",
             "contour_interval_m": 20,
             "band_step_m": 100
         }),

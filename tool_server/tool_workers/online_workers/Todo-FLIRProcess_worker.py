@@ -1,1 +1,0 @@
-# TODO: 红外遥感数据处理（解析红外相机内部测温元数据的 Python 库，直接输出温度矩阵）、辐射校正（ENVI Radiometric Calibration）

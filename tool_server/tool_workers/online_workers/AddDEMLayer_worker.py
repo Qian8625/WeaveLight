@@ -14,8 +14,8 @@ import ee
 import geemap
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 from osgeo import gdal, ogr, osr
-from qgis.core import QgsRasterFileWriter, QgsRasterLayer, QgsRasterPipe
 
 from tool_server.tool_workers.online_workers.base_tool_worker import BaseToolWorker
 from tool_server.utils.server_utils import build_logger
@@ -23,6 +23,8 @@ from tool_server.utils.server_utils import build_logger
 
 DEFAULT_DEM_SOURCE = "USGS/SRTMGL1_003"
 DEFAULT_NODATA = -32768
+DEFAULT_CONTOUR_MIN_LENGTH_M = 60.0
+DEFAULT_CONTOUR_SIMPLIFY_M = 15.0
 SUPPORTED_DEM_SOURCES = {
     "USGS/SRTMGL1_003": {
         "ee_path": "USGS/SRTMGL1_003",
@@ -42,6 +44,10 @@ def _load_aoi_geometry(gpkg):
     area_gdf = gpd.read_file(gpkg, layer="area_boundary")
     if area_gdf.empty:
         raise ValueError("'area_boundary' layer is empty")
+    if area_gdf.crs is None:
+        raise ValueError("'area_boundary' layer has no CRS")
+    if area_gdf.crs.to_string() != "EPSG:4326":
+        area_gdf = area_gdf.to_crs("EPSG:4326")
     try:
         geom = area_gdf.geometry.union_all()
     except AttributeError:
@@ -49,6 +55,84 @@ def _load_aoi_geometry(gpkg):
     if geom is None or geom.is_empty:
         raise ValueError("Area boundary geometry is empty")
     return geom
+
+
+def _explode_lines(gdf):
+    exploded = gdf.explode(index_parts=False)
+    return exploded.reset_index(drop=True)
+
+
+def _drop_empty_geometries(gdf):
+    mask = gdf.geometry.apply(lambda geom: geom is not None and not geom.is_empty)
+    return gdf[mask].copy()
+
+
+def _postprocess_contours(gpkg, layer_name, min_length_m=DEFAULT_CONTOUR_MIN_LENGTH_M, simplify_m=DEFAULT_CONTOUR_SIMPLIFY_M):
+    contours = gpd.read_file(gpkg, layer=layer_name)
+    if contours.empty:
+        return 0
+
+    aoi_geom = _load_aoi_geometry(gpkg)
+    if contours.crs is None:
+        contours = contours.set_crs("EPSG:4326")
+    elif contours.crs.to_string() != "EPSG:4326":
+        contours = contours.to_crs("EPSG:4326")
+
+    contours = contours.copy()
+    contours["geometry"] = contours.geometry.intersection(aoi_geom)
+    contours = _drop_empty_geometries(contours)
+    if contours.empty:
+        _delete_vector_layer(gpkg, layer_name)
+        raise ValueError("Contour generation produced no linework inside the AOI")
+
+    contours = _explode_lines(contours)
+    contours = _drop_empty_geometries(contours)
+
+    metric_crs = contours.estimate_utm_crs() or "EPSG:3857"
+    contours_metric = contours.to_crs(metric_crs)
+    contours_metric = contours_metric[contours_metric.geometry.length > 0].copy()
+    if contours_metric.empty:
+        _delete_vector_layer(gpkg, layer_name)
+        raise ValueError("Contour generation produced only zero-length features")
+
+    if min_length_m and min_length_m > 0:
+        contours_metric = contours_metric[contours_metric.geometry.length >= float(min_length_m)].copy()
+    if contours_metric.empty:
+        _delete_vector_layer(gpkg, layer_name)
+        raise ValueError("Contour generation only produced short artifacts after clipping to the AOI")
+
+    if simplify_m and simplify_m > 0:
+        contours_metric["geometry"] = contours_metric.geometry.simplify(
+            float(simplify_m),
+            preserve_topology=False,
+        )
+        contours_metric = _drop_empty_geometries(contours_metric)
+        contours_metric = contours_metric[contours_metric.geometry.length > 0].copy()
+    if contours_metric.empty:
+        _delete_vector_layer(gpkg, layer_name)
+        raise ValueError("Contour generation produced no valid features after simplification")
+
+    contours = contours_metric.to_crs("EPSG:4326")
+    contours["geometry"] = contours.geometry.intersection(aoi_geom)
+    contours = _drop_empty_geometries(contours)
+    contours = _explode_lines(contours)
+    contours = _drop_empty_geometries(contours)
+    if min_length_m and min_length_m > 0:
+        final_lengths = contours.to_crs(metric_crs).geometry.length
+        contours = contours.loc[final_lengths >= float(min_length_m)].copy()
+    contours = contours[contours.geometry.geom_type == "LineString"].copy()
+    if contours.empty:
+        _delete_vector_layer(gpkg, layer_name)
+        raise ValueError("Contour generation produced no LineString features after cleanup")
+
+    if "id" in contours.columns:
+        contours["id"] = pd.Series(range(1, len(contours) + 1), index=contours.index, dtype="int64")
+    if "elev_m" in contours.columns:
+        contours["elev_m"] = contours["elev_m"].astype(float)
+
+    _delete_vector_layer(gpkg, layer_name)
+    contours.to_file(gpkg, layer=layer_name, driver="GPKG")
+    return len(contours)
 
 
 def _delete_vector_layer(gpkg, layer_name):
@@ -104,29 +188,6 @@ def _read_dem_stats(tif_path):
         ds = None
 
 
-def _write_raster_to_gpkg(tif_path, gpkg, layer_name):
-    raster = QgsRasterLayer(tif_path, layer_name)
-    if not raster.isValid():
-        raise RuntimeError(f"Failed to load exported DEM raster: {tif_path}")
-
-    pipe = QgsRasterPipe()
-    provider = raster.dataProvider().clone()
-    pipe.set(provider)
-
-    writer = QgsRasterFileWriter(f"{gpkg}|layername={layer_name}")
-    status = writer.writeRaster(
-        pipe,
-        raster.width(),
-        raster.height(),
-        raster.extent(),
-        raster.crs(),
-    )
-    if status != QgsRasterFileWriter.NoError:
-        raise RuntimeError(
-            f"Failed to write DEM raster to GeoPackage layer '{layer_name}' (status={status})"
-        )
-
-
 def _create_contours(tif_path, gpkg, layer_name, contour_interval_m):
     _delete_vector_layer(gpkg, layer_name)
 
@@ -162,10 +223,14 @@ def _create_contours(tif_path, gpkg, layer_name, contour_interval_m):
             0,
             1,
         )
-        return contour_layer.GetFeatureCount()
+        raw_count = contour_layer.GetFeatureCount()
     finally:
         vector_ds = None
         raster_ds = None
+
+    if raw_count == 0:
+        return 0
+    return _postprocess_contours(gpkg, layer_name)
 
 
 def _build_band_raster(dem_tif_path, band_tif_path, band_step_m):
@@ -279,6 +344,15 @@ def _safe_remove(path):
     try:
         if path and os.path.exists(path):
             os.remove(path)
+        for sidecar_path in (
+            f"{path}.aux.xml",
+            f"{path}.ovr",
+            f"{path}-wal",
+            f"{path}-shm",
+            f"{path}-journal",
+        ):
+            if path and os.path.exists(sidecar_path):
+                os.remove(sidecar_path)
     except OSError:
         logger.warning(f"Failed to remove temporary file: {path}")
 
@@ -293,6 +367,9 @@ def AddDEMLayer(
     band_step_m=100,
     dem_source=DEFAULT_DEM_SOURCE,
 ):
+    # Kept for backward compatibility with existing callers. The DEM raster is no longer persisted.
+    _ = dem_layer_name
+
     if dem_source not in SUPPORTED_DEM_SOURCES:
         raise ValueError(
             f"Unsupported dem_source '{dem_source}'. "
@@ -310,7 +387,6 @@ def AddDEMLayer(
     try:
         _export_dem_to_tif(gpkg, dem_source, resolution_m, dem_tif_path)
         elev_min, elev_max = _read_dem_stats(dem_tif_path)
-        _write_raster_to_gpkg(dem_tif_path, gpkg, dem_layer_name)
         contour_count = _create_contours(dem_tif_path, gpkg, contour_layer_name, contour_interval_m)
         band_count = _create_elevation_bands(
             dem_tif_path,
@@ -323,7 +399,7 @@ def AddDEMLayer(
 
         gpkg_name = os.path.basename(gpkg)
         summary = (
-            f"DEM layer from {dem_source} saved to {gpkg_name} as '{dem_layer_name}'\n"
+            f"DEM from {dem_source} analyzed for {gpkg_name} (temporary raster not persisted)\n"
             f"Elevation range inside AOI: {elev_min:.2f} m to {elev_max:.2f} m\n"
             f"Contour layer '{contour_layer_name}' created with interval {float(contour_interval_m):g} m "
             f"({contour_count} features)\n"
@@ -332,7 +408,7 @@ def AddDEMLayer(
         )
         return {
             "text": summary,
-            "created_layers": [dem_layer_name, contour_layer_name, band_layer_name],
+            "created_layers": [contour_layer_name, band_layer_name],
             "elev_min_m": round(elev_min, 2),
             "elev_max_m": round(elev_max, 2),
         }
@@ -458,7 +534,7 @@ class AddDEMLayerWorker(BaseToolWorker):
                 "name": "AddDEMLayer",
                 "description": (
                     "Fetch a DEM from Google Earth Engine for the AOI stored in a GeoPackage, "
-                    "save the DEM raster into the GeoPackage, and create contour and elevation-band layers."
+                    "use it to create contour and elevation-band layers, and report elevation statistics."
                 ),
                 "parameters": {
                     "type": "object",
@@ -469,7 +545,7 @@ class AddDEMLayerWorker(BaseToolWorker):
                         },
                         "dem_layer_name": {
                             "type": "string",
-                            "description": "Output DEM raster layer name. Default is 'dem_30m'.",
+                            "description": "Deprecated and ignored. The DEM raster is only used internally and is not persisted.",
                         },
                         "contour_layer_name": {
                             "type": "string",

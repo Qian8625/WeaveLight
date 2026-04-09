@@ -1,5 +1,7 @@
-import os
 import json
+import os
+import shutil
+import tempfile
 import time
 from tool_server.tool_workers.tool_manager.base_manager import ToolManager
 
@@ -16,9 +18,25 @@ def abs_path(rel_path: str) -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), rel_path))
 
 
+def make_working_copy(rel_path: str, scratch_dir: str, filename: str | None = None) -> str:
+    """Copy a GeoPackage fixture so tests don't mutate tracked sample data."""
+    source = abs_path(rel_path)
+    target = os.path.join(scratch_dir, filename or os.path.basename(source))
+    shutil.copy2(source, target)
+    return target
+
+
 def main():
     print("\n=== Initializing Tool Manager ===")
     tm = ToolManager(controller_url_location=None)
+    scratch_dir = tempfile.mkdtemp(prefix="tools_test_")
+
+    aoi_gpkg = make_working_copy("tools_test_images/aoi.gpkg", scratch_dir)
+    aoi_1_index_gpkg = make_working_copy("tools_test_images/aoi_1.gpkg", scratch_dir, "aoi_1_index.gpkg")
+    aoi_1_dem_gpkg = make_working_copy("tools_test_images/aoi_1.gpkg", scratch_dir, "aoi_1_dem.gpkg")
+    aoi_tif_gpkg = make_working_copy("tools_test_images/aoi_tif.gpkg", scratch_dir)
+
+    print(f"Using scratch GeoPackages under: {scratch_dir}")
 
     # ----------------------------------------------------------------------
     # Example test inputs — executed in this exact sequence
@@ -84,53 +102,57 @@ def main():
         ("GetAreaBoundary", {"area": "Edinburgh Castle, Edinburgh, Scotland, UK","buffer_m": 1000}),
 
         ("AddPoisLayer", {
-            "gpkg": abs_path("tools_test_images/aoi.gpkg"),
+            "gpkg": aoi_gpkg,
             "query": {"amenity": "pharmacy"},
             "layer_name": "pharmacies"
         }),
 
         ("AddPoisLayer", {
-            "gpkg": abs_path("tools_test_images/aoi.gpkg"),
+            "gpkg": aoi_gpkg,
             "query": {"amenity": "school"},
             "layer_name": "schools"
         }),
 
         ("ComputeDistance", {
-            "gpkg": abs_path("tools_test_images/aoi.gpkg"),
+            "gpkg": aoi_gpkg,
             "src_layer": "schools",
             "tar_layer": "pharmacies",
             "top":1
         }),
          ("DisplayOnMap", {
-            "gpkg": abs_path("tools_test_images/aoi.gpkg"),
+            "gpkg": aoi_gpkg,
             "layers": ["area_boundary", "pharmacies", "schools", "schools_to_pharmacies_distances"]
         }),
 
         ("GetAreaBoundary", {"area": "Manchester State Forest, South Carolina, United States"}),
 
         ("AddIndexLayer", {
-            "gpkg": abs_path("tools_test_images/aoi_1.gpkg"),
+            "gpkg": aoi_1_index_gpkg,
             "index_type": "NDVI",
             "layer_name": "ndvi_2022",
             "year": 2022
         }),
 
         ("AddIndexLayer", {
-            "gpkg": abs_path("tools_test_images/aoi_1.gpkg"),
+            "gpkg": aoi_1_index_gpkg,
             "index_type": "NDVI",
             "layer_name": "ndvi_2025",
             "year": 2025
         }),
 
         ("AddDEMLayer", {
-            "gpkg": abs_path("tools_test_images/aoi_1.gpkg"),
-            "dem_layer_name": "dem_30m",
+            "gpkg": aoi_1_dem_gpkg,
             "contour_interval_m": 20,
             "band_step_m": 100
         }),
 
+        ("DisplayOnMap", {
+            "gpkg": aoi_1_dem_gpkg,
+            "layers": ["area_boundary", "dem_contours_20m", "dem_bands_100m"]
+        }),
+
         ("ComputeIndexChange", {
-            "gpkg": abs_path("tools_test_images/aoi_1.gpkg"),
+            "gpkg": aoi_1_index_gpkg,
             "index_type": "NDVI",
             "layer1_name": "ndvi_2022",
             "layer2_name": "ndvi_2025",
@@ -138,7 +160,7 @@ def main():
         }),
 
         ("ShowIndexLayer", {
-            "gpkg": abs_path("tools_test_images/aoi_1.gpkg"),
+            "gpkg": aoi_1_index_gpkg,
             "index_type": "NDVI",
             "layer_name": "delta_ndvi"
         }),
@@ -147,13 +169,13 @@ def main():
         }),
         ("GetAreaBoundary", {"area": (-95.9121, 41.2912, -95.8925, 41.3066)}),
         ("AddPoisLayer", {
-            "gpkg": abs_path("tools_test_images/aoi_tif.gpkg"),
+            "gpkg": aoi_tif_gpkg,
             "query": {"aeroway": "terminal"},
             "layer_name": "terminals"
         }),
 
         ("DisplayOnGeotiff", {
-            "gpkg": abs_path("tools_test_images/aoi_tif.gpkg"),
+            "gpkg": aoi_tif_gpkg,
             "geotiff": abs_path("tools_test_images/S_07.tif"),
             "layers": ['terminals'],
         }),

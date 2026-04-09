@@ -1,3 +1,4 @@
+# 基于地表温度（LST）与归一化植被指数（NDVI）计算 TVDI（温度植被干旱指数）
 import os
 import uuid
 import argparse

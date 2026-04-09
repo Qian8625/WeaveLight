@@ -1,5 +1,7 @@
-import os
 import json
+import os
+import shutil
+import tempfile
 from tool_server.tool_workers.tool_manager.base_manager import ToolManager
 
 """
@@ -10,6 +12,14 @@ Test script for the AddDEMLayer tool worker.
 def abs_path(rel_path: str) -> str:
     """Convert relative test file paths to absolute paths."""
     return os.path.abspath(os.path.join(os.path.dirname(__file__), rel_path))
+
+
+def make_working_copy(rel_path: str, scratch_dir: str, filename: str | None = None) -> str:
+    """Copy a GeoPackage fixture so the test does not mutate tracked sample data."""
+    source = abs_path(rel_path)
+    target = os.path.join(scratch_dir, filename or os.path.basename(source))
+    shutil.copy2(source, target)
+    return target
 
 
 def test_single_tool(tool_name: str, params: dict):
@@ -40,10 +50,13 @@ def test_single_tool(tool_name: str, params: dict):
 
 if __name__ == "__main__":
     target_tool = "AddDEMLayer"
+    scratch_dir = tempfile.mkdtemp(prefix="add_dem_layer_test_")
+    gpkg = make_working_copy("tools_test_images/aoi_1.gpkg", scratch_dir)
+
+    print(f"Using scratch GeoPackage under: {scratch_dir}")
 
     target_params = {
-        "gpkg": abs_path("tools_test_images/aoi_1.gpkg"),
-        "dem_layer_name": "dem_30m",
+        "gpkg": gpkg,
         "contour_interval_m": 20,
         "band_step_m": 100,
     }

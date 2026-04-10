@@ -242,17 +242,6 @@ tool_worker_config:
         service_account: "gee-key@velvety-being-491207-h2.iam.gserviceaccount.com"
         key_file: /home/ubuntu/01_Code/OpenEarthAgent/gee_key/my-project-1.json
 
-  - AddDEMLayer:
-      worker_name: AddDEMLayer
-      job_name: add_dem_layer
-      calculate_type: control
-      cmd:
-        script-addr: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/online_workers/AddDEMLayer_worker.py
-        port: 20027
-        host: "0.0.0.0"
-        service_account: "gee-key@velvety-being-491207-h2.iam.gserviceaccount.com"
-        key_file: /home/ubuntu/01_Code/OpenEarthAgent/gee_key/my-project-1.json
-
   - ComputeIndexChange:
       worker_name: ComputeIndexChange
       job_name: compute_index_change
@@ -298,4 +287,43 @@ tool_worker_config:
           script-addr: ./online_workers/SliceGeoTIFF_worker.py
           port: 20026
           host: "0.0.0.0"
-    
+
+  - AddDEMLayer:
+      worker_name: AddDEMLayer
+      job_name: add_dem_layer
+      calculate_type: control
+      cmd:
+        script-addr: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/online_workers/AddDEMLayer_worker.py
+        port: 20027
+        host: "0.0.0.0"
+        service_account: "gee-key@velvety-being-491207-h2.iam.gserviceaccount.com"
+        key_file: /home/ubuntu/01_Code/OpenEarthAgent/gee_key/my-project-1.json
+
+  - SARPreprocessing:
+        worker_name: SARPreprocessing
+        job_name: sar_preprocess
+        calculate_type: control
+        cmd:
+          script-addr: ./online_workers/SARPreprocessing_worker.py
+          port: 20028
+          host: "0.0.0.0"
+
+  - SARToRGB:
+        worker_name: SARToRGB
+        job_name: sar_to_rgb
+        calculate_type: control
+        cuda_visible_devices: "1"
+        cmd:
+          script-addr: ./online_workers/SARToRGB_worker.py
+          model-path: /home/ubuntu/01_Code/OpenEarthAgent/models/Seg-CycleGAN/175_net_G_A.pth
+          port: 20029
+          host: "0.0.0.0"
+
+  - TimeSeriesAssetRetriever:
+        worker_name: TimeSeriesAssetRetriever
+        job_name: time_series_asset_retriever
+        calculate_type: control
+        cmd:
+          script-addr: ./online_workers/TimeSeriesAssetRetriever_worker.py
+          port: 20030
+          host: "0.0.0.0"

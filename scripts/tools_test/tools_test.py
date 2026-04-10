@@ -186,7 +186,19 @@ def main():
             "lst_path": abs_path("tools_test_images/Sichuan_2021-07-12_LST.tif"), 
             "output_path": "test_diff_result_sm.tif",
         }
-        )    
+        ),
+
+        ("SARToRGB", {
+            "input_path": abs_path("/home/ubuntu/01_Code/OpenEarthAgent/scripts/data_test/SAR/sar_test_1_sar_preprocessed.png"), 
+            "output_path": abs_path("/home/ubuntu/01_Code/OpenEarthAgent/scripts/data_test/SAR/sar_test_1_to_rgb.png"), 
+        }
+        ),
+
+        ("SARPreprocessingWorker", {
+            "input_path": abs_path("/home/ubuntu/01_Code/OpenEarthAgent/scripts/data_test/SAR/sar_test_1_sar.png"), 
+        }
+        ),
+
     ]
 
     # ----------------------------------------------------------------------

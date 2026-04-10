@@ -39,13 +39,12 @@ def test_single_tool(tool_name: str, params: dict):
 
 if __name__ == "__main__":
     # 测试工具名称
-    target_tool = "TVDIAnalysis"  
+    target_tool = "SARToRGB"  
     
     # 按照工具需求，准备测试参数
     target_params = {
-        "ndvi_path": abs_path("tools_test_images/Sichuan_2021-07-12_NDVI.tif"), 
-        "lst_path": abs_path("tools_test_images/Sichuan_2021-07-12_LST.tif"), 
-        "output_path": "test_diff_result_sm.tif",
+        "input_path": abs_path("/home/ubuntu/01_Code/OpenEarthAgent/scripts/data_test/SAR/sar_test_1_sar_preprocessed.png"), 
+        "output_path": abs_path("/home/ubuntu/01_Code/OpenEarthAgent/scripts/data_test/SAR/sar_test_1_to_rgb.png"), 
     }
 
     test_single_tool(target_tool, target_params)

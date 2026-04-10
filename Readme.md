@@ -1,5 +1,5 @@
 # 添加工具
-1. 修改启动配置文件，在 tool_worker_config 列表的末尾，添加新工具的启动配置
+1. 修改启动配置文件，在 all_service_example_local.yaml 列表的末尾，添加新工具的启动配置
     例如：
     - SARDualFreqDiff:
         worker_name: SARDualFreqDiff

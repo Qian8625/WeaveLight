@@ -194,8 +194,13 @@ def main():
         }
         ),
 
-        ("SARPreprocessingWorker", {
-            "input_path": abs_path("/home/ubuntu/01_Code/OpenEarthAgent/scripts/data_test/SAR/sar_test_1_sar.png"), 
+        ("SARPreprocessing", {
+            "input_path": abs_path("/home/ubuntu/01_Code/OpenEarthAgent/scripts/data_test/SAR/sar_test_1.png"), 
+        }
+        ),
+
+        ("TimeSeriesAssetRetriever", {
+            "time_query": "20230624", 
         }
         ),
 

@@ -385,38 +385,71 @@ class SARToRGBWorker(BaseToolWorker):
         save_dir.mkdir(parents=True, exist_ok=True)
         return save_dir
 
-    def generate(self, params):
-        required_params = ["input_path", "output_path"]
-        for req in required_params:
-            if req not in params:
-                error_msg = f"Missing required parameter: '{req}'."
-                logger.error(error_msg)
-                return {"text": error_msg, "error_code": 2}
+    def _parse_request_params(self, params):
+        """
+        统一参数入口：
+        - 推荐新接口：image
+        - 兼容旧接口：input_path
+        - output_path 可选
+        """
+        image_value = params.get("image", params.get("input_path"))
+        if image_value is None or str(image_value).strip() == "":
+            raise ValueError("Missing required parameter: image")
 
-        input_path = str(params.get("input_path")).strip()
-        output_path = str(params.get("output_path")).strip()
+        input_path = str(image_value).strip()
+
+        output_path = params.get("output_path", None)
+        if output_path is not None:
+            output_path = str(output_path).strip()
+            if output_path == "":
+                output_path = None
+
+        return input_path, output_path
+
+    def _build_output_path(self, input_path: str, output_path: str = None) -> Path:
+        save_dir = self._get_save_dir()
+
+        if output_path:
+            final_output_path = save_dir / output_path
+        else:
+            input_stem = Path(input_path).stem
+            if not input_stem:
+                input_stem = f"sar_to_rgb_{uuid.uuid4().hex[:8]}"
+            final_output_path = save_dir / f"{input_stem}_rgb.png"
+
+        if final_output_path.suffix.lower() != ".png":
+            final_output_path = final_output_path.with_suffix(".png")
+
+        final_output_path.parent.mkdir(parents=True, exist_ok=True)
+        return final_output_path
+
+    @torch.inference_mode()
+    def generate(self, params):
+        try:
+            input_path, output_path = self._parse_request_params(params)
+        except ValueError as e:
+            error_msg = str(e)
+            logger.error(error_msg)
+            return {"text": error_msg, "error_code": 2}
+
+        if not os.path.exists(input_path):
+            error_msg = f"Image not found: {input_path}"
+            logger.error(error_msg)
+            return {"text": error_msg, "error_code": 3}
+
+        if self.model is None:
+            error_msg = "Model is not initialized."
+            logger.error(error_msg)
+            return {"text": error_msg, "error_code": 1}
 
         try:
-            if not os.path.exists(input_path):
-                raise FileNotFoundError(f"Input image not found: {input_path}")
-
-            if self.model is None:
-                raise RuntimeError("Model is not initialized.")
-
             input_tensor, meta = preprocess_image(input_path, img_size=self.img_size)
-            input_tensor = input_tensor.to(self.device)
+            input_tensor = input_tensor.to(self.device, non_blocking=True)
 
-            with torch.no_grad():
-                output_tensor = self.model(input_tensor)
-
+            output_tensor = self.model(input_tensor)
             output_image = postprocess_image(output_tensor, meta)
 
-            save_dir = self._get_save_dir()
-            final_output_path = save_dir / output_path
-            if final_output_path.suffix.lower() != ".png":
-                final_output_path = final_output_path.with_suffix(".png")
-            final_output_path.parent.mkdir(parents=True, exist_ok=True)
-
+            final_output_path = self._build_output_path(input_path, output_path)
             output_image.save(final_output_path)
 
             result_msg = f"SAR-to-RGB translation completed. Result saved at {final_output_path}"
@@ -442,25 +475,30 @@ class SARToRGBWorker(BaseToolWorker):
                 "description": (
                     "Translate an input SAR image into an RGB image using a fixed pretrained model. "
                     "Supports RGB PNG/JPG/JPEG input and 3-channel TIFF input. "
-                    "The output is always saved as a PNG image."
+                    "The output is saved as a PNG image."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "input_path": {
+                        "image": {
                             "type": "string",
-                            "description": "Path to the input image. Supports RGB PNG/JPG/JPEG and 3-channel TIFF."
+                            "description": (
+                                "Path to the input image. Supports RGB PNG/JPG/JPEG and 3-channel TIFF. "
+                                "This is the recommended parameter name."
+                            ),
                         },
                         "output_path": {
                             "type": "string",
-                            "description": "Relative output image path. Final output is always saved as PNG."
-                        }
+                            "description": (
+                                "Optional relative output path. If omitted, the worker auto-generates "
+                                "a PNG filename under the save directory."
+                            ),
+                        },
                     },
-                    "required": ["input_path", "output_path"]
-                }
-            }
+                    "required": ["image"],
+                },
+            },
         }
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

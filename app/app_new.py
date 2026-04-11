@@ -104,6 +104,12 @@ TOOL_ARG_BINDINGS = {
         "ndvi_path": "ndvi_image",
         "lst_path": "lst_image",
     },
+    "SARToRGB": {
+        "image": "primary_image",
+    },
+    "SARPreprocessing": {
+        "image": "primary_image",
+    },
 }
 
 TOOL_DEFAULT_ARGUMENTS = {

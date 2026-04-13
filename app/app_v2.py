@@ -5,6 +5,7 @@ import torch
 import os
 import html
 from PIL import Image
+from datetime import datetime
 import rasterio
 import numpy as np
 from tool_server.tool_workers.tool_manager.base_manager import ToolManager
@@ -483,7 +484,7 @@ def run_agent(user_question, *flat_args):
         return make_preview_if_tif(latest) if latest and os.path.isfile(latest) else None
 
     def emit(download_path=None):
-        return render_chat_html(chat_msgs), current_preview(), download_path
+        return render_chat_html(chat_msgs), current_preview(), download_path, download_path
 
     for round_id in range(1, MAX_TOOL_ROUNDS + 1):
         model_output = Model.generate(conversation)
@@ -531,489 +532,157 @@ def run_agent(user_question, *flat_args):
 
 css = """
 :root {
-    --bg-top: #f7f1e5;
-    --bg-bottom: #edf4ef;
-    --surface: rgba(255, 253, 249, 0.94);
-    --surface-strong: #fffdfa;
-    --surface-soft: #eef5f2;
-    --line: #d7e1db;
-    --line-strong: #b8c8c0;
-    --text: #173042;
-    --muted: #5f717d;
-    --accent: #0f766e;
-    --accent-deep: #0a5a54;
-    --accent-soft: #dff1eb;
-    --highlight: #c96d3d;
-    --highlight-soft: #f5e4d9;
-    --shadow: 0 18px 42px rgba(17, 42, 58, 0.10);
-    --radius-xl: 24px;
-    --radius-lg: 18px;
-    --radius-md: 14px;
+    --c-deep: #355872;
+    --c-mid: #7AAACE;
+    --c-light: #9CD5FF;
+    --c-bg: #F7F8F0;
+    --c-border: #d6deea;
+    --c-text: #132a3f;
+    --c-muted: #58738a;
+    --card: #ffffff;
+    --shadow: 0 10px 28px rgba(53, 88, 114, 0.10);
 }
 
 html, body, .gradio-container {
-    background:
-        radial-gradient(circle at top left, rgba(15, 118, 110, 0.10), transparent 26%),
-        radial-gradient(circle at bottom right, rgba(201, 109, 61, 0.12), transparent 28%),
-        linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%) !important;
-    color: var(--text) !important;
-    font-family: "IBM Plex Sans", "Segoe UI", sans-serif !important;
+    background: var(--c-bg) !important;
+    color: var(--c-text) !important;
+    font-family: "Inter", "IBM Plex Sans", "Segoe UI", sans-serif !important;
 }
 
 .gradio-container {
-    max-width: 1680px !important;
-    margin: 0 auto !important;
-    padding: 20px !important;
+    max-width: 100vw !important;
+    padding: 92px 16px 16px !important;
 }
 
-.workspace-grid {
-    gap: 18px;
-    align-items: stretch;
-}
-
-.left-rail, .center-rail, .right-rail {
-    gap: 18px;
-}
-
-.panel-card {
-    background: linear-gradient(180deg, rgba(255, 253, 250, 0.96) 0%, rgba(255, 255, 255, 0.92) 100%) !important;
-    border: 1px solid rgba(184, 200, 192, 0.85) !important;
-    border-radius: var(--radius-xl) !important;
-    padding: 18px !important;
-    box-shadow: var(--shadow) !important;
-    overflow: hidden !important;
-}
-
-.brand-card {
-    padding: 0 !important;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-
-.brand-panel {
-    background: linear-gradient(135deg, rgba(255, 253, 250, 0.98) 0%, rgba(239, 247, 243, 0.98) 52%, rgba(245, 228, 217, 0.95) 100%);
-    border: 1px solid rgba(184, 200, 192, 0.9);
-    border-radius: 30px;
-    padding: 22px;
+.topbar-card {
+    position: fixed;
+    top: 12px;
+    left: 16px;
+    right: 16px;
+    z-index: 60;
+    background: linear-gradient(120deg, var(--c-deep), #426a8c 50%, var(--c-mid));
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    color: #fff;
+    border-radius: 16px;
     box-shadow: var(--shadow);
+    margin-bottom: 12px;
 }
 
-.brand-shell {
-    display: flex;
-    gap: 16px;
-    align-items: center;
-}
-
-.brand-mark {
-    width: 76px;
-    height: 76px;
-    border-radius: 22px;
-    background: rgba(255, 255, 255, 0.92);
-    border: 1px solid rgba(184, 200, 192, 0.85);
+.topbar-inner {
     display: flex;
     align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
+    gap: 12px;
+    padding: 12px 16px;
 }
 
-.brand-mark img {
-    width: 54px;
-    height: 54px;
-    object-fit: contain;
-}
-
-.brand-copy h1,
-.empty-chat-card h3,
-.section-head h3 {
-    margin: 0;
-    color: var(--text);
-    font-family: "Space Grotesk", "IBM Plex Sans", sans-serif;
-}
-
-.brand-copy p,
-.section-head p,
-.mode-note p,
-.runtime-item p,
-.workflow-step p,
-.result-note,
-.empty-chat-card p,
-.placeholder-step p {
-    margin: 0;
-    color: var(--muted);
-    line-height: 1.55;
-}
-
-.panel-kicker {
+.topbar-logo {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.35);
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 8px;
-    padding: 5px 10px;
-    border-radius: 999px;
-    background: rgba(23, 48, 66, 0.08);
-    color: var(--text);
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+    justify-content: center;
 }
 
-.stat-row {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+.topbar-logo img { width: 26px; height: 26px; object-fit: contain; }
+.topbar-title h1 { margin: 0; font-size: 20px; color: #fff; }
+.topbar-title p { margin: 2px 0 0; font-size: 12px; color: rgba(255,255,255,.88); }
+
+.workspace-grid {
     gap: 12px;
-    margin-top: 18px;
+    align-items: stretch;
+    height: calc(100vh - 108px);
 }
 
-.stat-card {
-    padding: 14px 16px;
-    border-radius: 18px;
-    background: rgba(255, 255, 255, 0.88);
-    border: 1px solid rgba(184, 200, 192, 0.8);
+.left-rail,
+.right-rail {
+    height: 100%;
+    overflow: hidden;
 }
 
-.stat-card span {
-    display: block;
-    color: var(--muted);
-    font-size: 12px;
-    margin-bottom: 6px;
+.center-rail {
+    height: 100%;
+    min-width: 760px;
 }
 
-.stat-card strong {
-    color: var(--text);
-    font-size: 16px;
-    font-weight: 700;
-}
-
-.workflow-panel,
-.runtime-panel {
+.fixed-column {
+    height: 100%;
     display: flex;
     flex-direction: column;
     gap: 12px;
 }
 
-.workflow-step,
-.runtime-item {
-    display: flex;
-    gap: 12px;
-    padding: 14px 16px;
-    border-radius: 18px;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(245, 249, 247, 0.96) 100%);
-    border: 1px solid rgba(184, 200, 192, 0.75);
+.scroll-y { overflow-y: auto; }
+
+.panel-card {
+    background: var(--card) !important;
+    border: 1px solid var(--c-border) !important;
+    border-radius: 16px !important;
+    box-shadow: var(--shadow) !important;
+    padding: 12px !important;
+    overflow: hidden;
 }
 
-.workflow-step span {
-    width: 34px;
-    height: 34px;
-    border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--accent-deep);
-    font-size: 13px;
-    font-weight: 700;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-}
+.section-head h3 { margin: 0; color: var(--c-text); }
+.section-head p { margin: 6px 0 0; color: var(--c-muted); font-size: 13px; line-height: 1.45; }
+.section-head .panel-kicker { font-size: 11px; color: var(--c-deep); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 
-.workflow-step strong,
-.runtime-item strong,
-.mode-note strong,
-.placeholder-step strong {
-    display: block;
-    color: var(--text);
-    margin-bottom: 4px;
-}
-
-.section-head {
-    margin-bottom: 14px;
-}
-
-.section-head h3 {
-    font-size: 24px;
-    margin-bottom: 6px;
-}
-
-.mode-tabs button {
-    border-radius: 999px !important;
-    font-weight: 700 !important;
-}
-
-.mode-tabs button[aria-selected="true"] {
-    background: var(--text) !important;
-    color: #ffffff !important;
-}
-
-.mode-note {
-    margin-bottom: 14px;
-    padding: 14px 16px;
-    border-radius: 18px;
-    background: linear-gradient(180deg, rgba(223, 241, 235, 0.7) 0%, rgba(255, 255, 255, 0.82) 100%);
-    border: 1px solid rgba(184, 200, 192, 0.78);
-}
+.mode-tabs button[aria-selected="true"] { background: var(--c-deep) !important; color: #fff !important; }
+.mode-note { background: #f8fbff; border: 1px solid #e4edf8; border-radius: 12px; padding: 10px; margin-bottom: 10px; }
+.mode-note p { margin: 6px 0 0; color: var(--c-muted); font-size: 12px; }
 
 .upload-slot,
 .result-view,
 .download-slot {
-    border-radius: 20px !important;
-    overflow: hidden !important;
-    border: 1px solid rgba(184, 200, 192, 0.9) !important;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(243, 248, 245, 0.95) 100%) !important;
-}
-
-.question-box textarea,
-.question-box input {
-    border-radius: 18px !important;
-    border: 1px solid rgba(184, 200, 192, 0.9) !important;
-    background: rgba(255, 255, 255, 0.92) !important;
-    color: var(--text) !important;
-    box-shadow: none !important;
-    font-size: 15px !important;
-}
-
-.question-box textarea:focus,
-.question-box input:focus {
-    border-color: rgba(15, 118, 110, 0.9) !important;
-    box-shadow: 0 0 0 4px rgba(15, 118, 110, 0.12) !important;
-}
-
-.button-stack {
-    gap: 10px;
-}
-
-.submit-btn button,
-.clear-btn button {
-    min-height: 48px !important;
-    border-radius: 16px !important;
-    border: none !important;
-    font-weight: 700 !important;
-    box-shadow: none !important;
-}
-
-.submit-btn button {
-    background: linear-gradient(135deg, var(--text) 0%, #23465c 100%) !important;
-    color: #ffffff !important;
-}
-
-.clear-btn button {
-    background: rgba(255, 255, 255, 0.9) !important;
-    color: var(--text) !important;
-    border: 1px solid rgba(184, 200, 192, 0.9) !important;
+    border-radius: 12px !important;
+    border: 1px solid #dde7f3 !important;
+    background: #fbfdff !important;
 }
 
 .chat-shell {
-    min-height: 560px;
-    max-height: 70vh;
+    height: calc(100% - 132px);
     overflow: auto;
-    border: 1px solid rgba(184, 200, 192, 0.85);
-    border-radius: 22px;
-    background: linear-gradient(180deg, rgba(253, 251, 247, 0.94) 0%, rgba(244, 248, 246, 0.96) 100%);
+    border: 1px solid var(--c-border);
+    border-radius: 14px;
+    background: #fff;
 }
 
-.chat-area {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 16px;
-}
+.chat-area { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
 
-.assistant-msg,
-.user-msg {
-    max-width: 92%;
-    border-radius: 20px;
-    padding: 14px 16px;
-    border: 1px solid rgba(184, 200, 192, 0.9);
-    box-shadow: 0 10px 24px rgba(17, 42, 58, 0.06);
-}
+.user-msg, .assistant-msg { max-width: 88%; border-radius: 14px; padding: 12px; border: 1px solid #dbe5f1; }
+.user-msg { margin-left: auto; background: #edf6ff; border-color: #cbe3fb; }
+.assistant-msg { background: #f9fbff; }
+.action-msg { background: #eef7ff; border-color: #cfe5fb; }
+.observation-msg { background: #eefaf7; border-color: #cde9df; }
+.final-msg { background: #f0f6fb; border-color: #d4e1ef; }
 
-.assistant-msg {
-    background: rgba(255, 255, 255, 0.92);
-}
+.msg-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.round-pill, .msg-badge { border-radius: 999px; padding: 3px 10px; font-size: 10px; font-weight: 700; background: #e9f1fa; color: var(--c-deep); }
+.msg-heading { font-size: 13px; font-weight: 700; }
+.assistant-msg pre, .user-msg pre { margin: 0; white-space: pre-wrap; font-size: 12px; line-height: 1.55; }
 
-.user-msg {
-    margin-left: auto;
-    background: linear-gradient(135deg, rgba(15, 118, 110, 0.12) 0%, rgba(255, 255, 255, 0.94) 100%);
-    border-color: rgba(15, 118, 110, 0.25);
-}
+.composer-row { height: 120px; margin-top: 10px; }
+.question-box textarea { height: 104px !important; border-radius: 12px !important; border: 1px solid #cbd8e8 !important; }
+.submit-btn button, .clear-btn button { border-radius: 12px !important; min-height: 44px !important; font-weight: 700 !important; }
+.submit-btn button { background: var(--c-deep) !important; color: #fff !important; }
+.clear-btn button { background: #fff !important; border: 1px solid #c8d7e7 !important; color: var(--c-text) !important; }
 
-.action-msg {
-    border-left: 4px solid var(--highlight);
-    background: linear-gradient(180deg, rgba(245, 228, 217, 0.55) 0%, rgba(255, 255, 255, 0.95) 100%);
-}
+.example-panel { flex: 0 0 42%; }
+.preview-panel { flex: 1; }
+.input-panel { flex: 1; }
+.bulk-download-panel { flex: 0 0 36%; }
 
-.observation-msg {
-    border-left: 4px solid var(--accent);
-    background: linear-gradient(180deg, rgba(223, 241, 235, 0.60) 0%, rgba(255, 255, 255, 0.95) 100%);
-}
-
-.final-msg {
-    border-left: 4px solid var(--text);
-    background: linear-gradient(180deg, rgba(227, 237, 244, 0.72) 0%, rgba(255, 255, 255, 0.96) 100%);
-}
-
-.thinking-msg,
-.alert-msg {
-    background: linear-gradient(180deg, rgba(248, 244, 237, 0.96) 0%, rgba(255, 255, 255, 0.96) 100%);
-}
-
-.msg-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 10px;
-}
-
-.round-pill,
-.msg-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: 4px 10px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-}
-
-.round-pill {
-    background: rgba(23, 48, 66, 0.08);
-    color: var(--text);
-}
-
-.msg-badge {
-    color: var(--text);
-    background: rgba(23, 48, 66, 0.08);
-}
-
-.badge-user {
-    background: rgba(15, 118, 110, 0.14);
-    color: var(--accent-deep);
-}
-
-.badge-action {
-    background: rgba(201, 109, 61, 0.14);
-    color: var(--highlight);
-}
-
-.badge-observation {
-    background: rgba(15, 118, 110, 0.14);
-    color: var(--accent-deep);
-}
-
-.badge-final {
-    background: rgba(23, 48, 66, 0.12);
-    color: var(--text);
-}
-
-.badge-thinking,
-.badge-agent,
-.badge-alert {
-    background: rgba(95, 113, 125, 0.14);
-    color: var(--muted);
-}
-
-.msg-heading {
-    color: var(--text);
-    font-size: 14px;
-    font-weight: 700;
-}
-
-.assistant-msg pre,
-.user-msg pre {
-    margin: 0;
-    white-space: pre-wrap;
-    color: var(--text);
-    line-height: 1.6;
-    font-size: 12.5px;
-    font-family: "IBM Plex Mono", "Consolas", monospace;
-}
-
-.empty-chat-card {
-    padding: 24px;
-    border-radius: 24px;
-    border: 1px dashed rgba(184, 200, 192, 0.95);
-    background: linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(239, 247, 243, 0.92) 60%, rgba(245, 228, 217, 0.86) 100%);
-}
-
-.empty-chat-card h3 {
-    margin-bottom: 8px;
-}
-
-.placeholder-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-    margin-top: 18px;
-}
-
-.placeholder-step {
-    padding: 16px;
-    border-radius: 18px;
-    background: rgba(255, 255, 255, 0.88);
-    border: 1px solid rgba(184, 200, 192, 0.8);
-}
-
-.placeholder-step span {
-    display: inline-flex;
-    margin-bottom: 10px;
-    color: var(--highlight);
-    font-weight: 700;
-    font-size: 12px;
-    letter-spacing: 0.08em;
-}
-
-.gallery-note {
-    color: var(--muted);
-    margin-bottom: 10px;
-}
-
-.example-accordion {
-    border-radius: 18px !important;
-    border: 1px solid rgba(184, 200, 192, 0.85) !important;
-    background: rgba(255, 255, 255, 0.78) !important;
-}
-
-.result-note {
-    margin-top: 12px;
-    padding: 12px 14px;
-    border-radius: 16px;
-    background: rgba(223, 241, 235, 0.55);
-    border: 1px solid rgba(184, 200, 192, 0.78);
-    font-size: 13px;
-}
-
-@media (max-width: 1280px) {
-    .stat-row,
-    .placeholder-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .chat-shell {
-        min-height: 460px;
-        max-height: 60vh;
-    }
-}
-
-@media (max-width: 900px) {
-    .gradio-container {
-        padding: 12px !important;
-    }
-
-    .brand-shell {
-        align-items: flex-start;
-    }
-
-    .chat-shell {
-        min-height: 360px;
-        max-height: none;
-    }
+@media (max-width: 1400px) {
+    .workspace-grid { height: auto; }
+    .left-rail, .center-rail, .right-rail { height: auto; }
 }
 """
 
 
 def reset_ui():
-    outputs = ["", render_chat_html([]), None, None]
+    outputs = ["", render_chat_html([]), None, None, None]
     for _ in INPUT_SPECS:
         outputs.extend([None, None])
     return tuple(outputs)
@@ -1022,52 +691,42 @@ def reset_ui():
 with gr.Blocks(title="WeavLight Workspace", css=css) as demo:
     state_components, image_components = {}, {}
 
+    gr.HTML(
+        """
+        <div class="topbar-card">
+            <div class="topbar-inner">
+                <div class="topbar-logo"><img src="./assets/nwpu-logo.svg" alt="logo"/></div>
+                <div class="topbar-title">
+                    <h1>WeavLight · AI Agent Imagery Workspace</h1>
+                    <p>Multi-modal remote-sensing analysis cockpit · desktop optimized</p>
+                </div>
+            </div>
+        </div>
+        """
+    )
+
     with gr.Row(elem_classes=["workspace-grid"]):
-        with gr.Column(scale=4, min_width=360, elem_classes=["left-rail"]):
-            gr.HTML(build_brand_panel_html(), elem_classes=["brand-card"])
-            gr.HTML(build_workflow_panel_html(), elem_classes=["panel-card"])
-
-            with gr.Column(elem_classes=["panel-card", "upload-panel"]):
-                gr.HTML(
-                    """
-                    <div class="section-head">
-                        <div class="panel-kicker">Inputs</div>
-                        <h3>Task-specific upload slots</h3>
-                        <p>Choose the right input group so the runtime can bind uploaded files to the correct tool arguments automatically.</p>
-                    </div>
-                    """
-                )
-
+        with gr.Column(scale=3, min_width=330, elem_classes=["left-rail", "fixed-column"]):
+            with gr.Column(elem_classes=["panel-card", "input-panel", "scroll-y"]):
+                gr.HTML("<div class='section-head'><div class='panel-kicker'>Left</div><h3>Image upload inputs</h3><p>Upload task imagery here. This area is fixed-width for desktop workflow stability.</p></div>")
                 with gr.Tabs(elem_classes=["mode-tabs"]):
                     for group in INPUT_GROUPS:
                         with gr.Tab(group["tab"]):
                             gr.HTML(f"<div class='mode-note'><strong>{group['title']}</strong><p>{group['note']}</p></div>")
                             if len(group["input_keys"]) == 1:
                                 spec = get_input_spec(group["input_keys"][0])
-                                image_components[spec["key"]] = gr.Image(
-                                    type="filepath",
-                                    label=spec["label"],
-                                    height=spec["height"],
-                                    sources=["upload", "clipboard"],
-                                    elem_classes=["upload-slot"],
-                                )
+                                image_components[spec["key"]] = gr.Image(type="filepath", label=spec["label"], height=spec["height"], sources=["upload", "clipboard"], elem_classes=["upload-slot"])
                                 state_components[spec["key"]] = gr.State()
                             else:
                                 with gr.Row():
                                     for key in group["input_keys"]:
                                         spec = get_input_spec(key)
-                                        image_components[spec["key"]] = gr.Image(
-                                            type="filepath",
-                                            label=spec["label"],
-                                            height=spec["height"],
-                                            sources=["upload", "clipboard"],
-                                            elem_classes=["upload-slot"],
-                                        )
+                                        image_components[spec["key"]] = gr.Image(type="filepath", label=spec["label"], height=spec["height"], sources=["upload", "clipboard"], elem_classes=["upload-slot"])
                                         state_components[spec["key"]] = gr.State()
 
-                gr.HTML(
-                    "<div class='result-note'>GeoTIFF files are previewed automatically, but the original raster path is preserved for downstream tools.</div>"
-                )
+            with gr.Column(elem_classes=["panel-card", "bulk-download-panel"]):
+                gr.HTML("<div class='section-head'><div class='panel-kicker'>Left</div><h3>Batch output download</h3><p>Download current generated assets in one place to close the operation loop.</p></div>")
+                download_file = gr.File(label="Batch Download / Latest Output", elem_classes=["download-slot"])
 
             for spec in INPUT_SPECS:
                 image_components[spec["key"]].change(
@@ -1077,122 +736,53 @@ with gr.Blocks(title="WeavLight Workspace", css=css) as demo:
                     trigger_mode="once",
                 )
 
-        with gr.Column(scale=6, min_width=660, elem_classes=["center-rail"]):
-            with gr.Column(elem_classes=["panel-card", "conversation-panel"]):
-                gr.HTML(
-                    """
-                    <div class="section-head">
-                        <div class="panel-kicker">Conversation</div>
-                        <h3>Ask, inspect, iterate</h3>
-                        <p>The chat surface below shows the selected tools, injected arguments, returned observations, and final answer in chronological order.</p>
-                    </div>
-                    """
-                )
+        with gr.Column(scale=6, min_width=760, elem_classes=["center-rail", "fixed-column"]):
+            with gr.Column(elem_classes=["panel-card"], scale=1):
+                gr.HTML("<div class='section-head'><div class='panel-kicker'>Center</div><h3>Agent Q&A process log</h3><p>The chat stream shows each tool action, observation, and final answer step-by-step.</p></div>")
                 chat_html = gr.HTML(value=render_chat_html([]), elem_classes=["chat-shell"])
-
                 with gr.Row(elem_classes=["composer-row"]):
-                    user_input = gr.Textbox(
-                        label="Task Prompt",
-                        placeholder="描述分析目标、目标区域、时间范围或对象，例如：比较两期影像的变化并标注主要区域。",
-                        lines=4,
-                        elem_classes=["question-box"],
-                        scale=8,
-                    )
-                    with gr.Column(scale=2, min_width=160, elem_classes=["button-stack"]):
-                        submit_btn = gr.Button("Run Agent", elem_classes=["submit-btn"])
-                        clear_btn = gr.Button("Reset Workspace", elem_classes=["clear-btn"])
+                    user_input = gr.Textbox(label="", placeholder="Type your task for the AI Agent...", lines=4, elem_classes=["question-box"], scale=8)
+                    with gr.Column(scale=2, min_width=160):
+                        submit_btn = gr.Button("Send", elem_classes=["submit-btn"])
+                        clear_btn = gr.Button("Clear", elem_classes=["clear-btn"])
 
-            with gr.Column(elem_classes=["panel-card", "gallery-panel"]):
-                gr.HTML(
-                    """
-                    <div class="section-head">
-                        <div class="panel-kicker">Templates</div>
-                        <h3>Prompt gallery</h3>
-                        <p>Load a starter prompt and the matching sample assets, then refine the request in the prompt box.</p>
-                    </div>
-                    """
-                )
-                with gr.Accordion("Browse starter prompts", open=False, elem_classes=["example-accordion"]):
-                    gr.Markdown("Selecting an example will auto-fill the prompt and the corresponding upload components.")
+        with gr.Column(scale=3, min_width=330, elem_classes=["right-rail", "fixed-column"]):
+            with gr.Column(elem_classes=["panel-card", "example-panel", "scroll-y"]):
+                gr.HTML("<div class='section-head'><div class='panel-kicker'>Right</div><h3>Example templates</h3><p>Open or collapse examples to quickly bootstrap prompts and inputs.</p></div>")
+                with gr.Accordion("Open / Hide Examples", open=False, elem_classes=["example-accordion"]):
                     example_inputs = [user_input] + [image_components[spec["key"]] for spec in INPUT_SPECS]
                     with gr.Tabs():
                         with gr.Tab("General / Index"):
-                            gr.Examples(
-                                examples=[
-                                    make_example("Generate a preview from the NBR difference for Topanga State Park, Los Angeles, USA, covering December 2024 and February 2025."),
-                                    make_example(
-                                        "Visualize all museums and malls over the given GeoTIFF image, compute the distance between the closest pair, and finally annotate the image with this distance.",
-                                        primary_image="./assets/S_10_preview.png",
-                                    ),
-                                    make_example(
-                                        "Locate and estimate the distance between aircrafts in the scene. Assuming GSD 0.6 px/meter",
-                                        primary_image="./assets/TG_P0009.png",
-                                    ),
-                                ],
-                                inputs=example_inputs,
-                                preprocess=False,
-                            )
+                            gr.Examples(examples=[
+                                make_example("Generate a preview from the NBR difference for Topanga State Park, Los Angeles, USA, covering December 2024 and February 2025."),
+                                make_example("Visualize all museums and malls over the given GeoTIFF image, compute the distance between the closest pair, and finally annotate the image with this distance.", primary_image="./assets/S_10_preview.png"),
+                                make_example("Locate and estimate the distance between aircrafts in the scene. Assuming GSD 0.6 px/meter", primary_image="./assets/TG_P0009.png"),
+                            ], inputs=example_inputs, preprocess=False)
                         with gr.Tab("Terrain / DEM"):
-                            gr.Examples(
-                                examples=[
-                                    make_example("For Manchester State Forest, South Carolina, United States, create a DEM layer from GEE, generate 20 m contours and 100 m elevation bands, and summarize the elevation range."),
-                                    make_example("For the area within a 1000 m radius of Edinburgh Castle, generate a DEM layer, create contour lines, and visualize the resulting terrain bands on the map."),
-                                ],
-                                inputs=example_inputs,
-                                preprocess=False,
-                            )
+                            gr.Examples(examples=[
+                                make_example("For Manchester State Forest, South Carolina, United States, create a DEM layer from GEE, generate 20 m contours and 100 m elevation bands, and summarize the elevation range."),
+                                make_example("For the area within a 1000 m radius of Edinburgh Castle, generate a DEM layer, create contour lines, and visualize the resulting terrain bands on the map."),
+                            ], inputs=example_inputs, preprocess=False)
                         with gr.Tab("TVDI"):
-                            gr.Examples(
-                                examples=[
-                                    make_example(
-                                        "Compute the Temperature Vegetation Dryness Index (TVDI) from NDVI and LST rasters.",
-                                        lst_image="./assets/Sichuan_2021-07-12_LST.tif",
-                                        ndvi_image="./assets/Sichuan_2021-07-12_NDVI.tif",
-                                    ),
-                                ],
-                                inputs=example_inputs,
-                                preprocess=False,
-                            )
+                            gr.Examples(examples=[
+                                make_example("Compute the Temperature Vegetation Dryness Index (TVDI) from NDVI and LST rasters.", lst_image="./assets/Sichuan_2021-07-12_LST.tif", ndvi_image="./assets/Sichuan_2021-07-12_NDVI.tif"),
+                            ], inputs=example_inputs, preprocess=False)
                         with gr.Tab("Time Series"):
-                            gr.Examples(
-                                examples=[
-                                    make_example("Compare the two temporal images and identify the major changes."),
-                                ],
-                                inputs=example_inputs,
-                                preprocess=False,
-                            )
+                            gr.Examples(examples=[make_example("Compare the two temporal images and identify the major changes.")], inputs=example_inputs, preprocess=False)
 
-        with gr.Column(scale=4, min_width=340, elem_classes=["right-rail"]):
             with gr.Column(elem_classes=["panel-card", "preview-panel"]):
-                gr.HTML(
-                    """
-                    <div class="section-head">
-                        <div class="panel-kicker">Outputs</div>
-                        <h3>Live preview and download</h3>
-                        <p>The preview refreshes whenever a tool returns an image or raster. Download always points to the latest generated asset.</p>
-                    </div>
-                    """
-                )
-                output_image = gr.Image(
-                    type="filepath",
-                    label="Live Preview",
-                    height=360,
-                    elem_classes=["result-view"],
-                )
-                download_file = gr.File(label="Download Latest Output", elem_classes=["download-slot"])
-                gr.HTML(
-                    "<div class='result-note'>If the tool output is a GeoTIFF, the right panel shows a PNG preview while keeping the original file available for download.</div>"
-                )
+                gr.HTML("<div class='section-head'><div class='panel-kicker'>Right</div><h3>HD preview + single download</h3><p>Inspect the latest visual result with high clarity before downloading.</p></div>")
+                output_image = gr.Image(type="filepath", label="Output Preview", height=340, elem_classes=["result-view"])
+                single_download_file = gr.File(label="Single Output Download", elem_classes=["download-slot"])
 
-            gr.HTML(build_runtime_panel_html(), elem_classes=["panel-card", "tips-card"])
 
     submit_inputs = [user_input]
     for spec in INPUT_SPECS:
         submit_inputs.extend([image_components[spec["key"]], state_components[spec["key"]]])
 
-    submit_btn.click(run_agent, inputs=submit_inputs, outputs=[chat_html, output_image, download_file])
+    submit_btn.click(run_agent, inputs=submit_inputs, outputs=[chat_html, output_image, download_file, single_download_file])
 
-    clear_outputs = [user_input, chat_html, output_image, download_file]
+    clear_outputs = [user_input, chat_html, output_image, download_file, single_download_file]
     for spec in INPUT_SPECS:
         clear_outputs.extend([image_components[spec["key"]], state_components[spec["key"]]])
     clear_btn.click(reset_ui, inputs=[], outputs=clear_outputs)

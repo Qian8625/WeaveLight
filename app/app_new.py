@@ -77,7 +77,7 @@ INPUT_GROUPS = [
     {
         "tab": "Time Series",
         "title": "Time-series / bi-temporal comparison",
-        "note": "Upload two temporal images here. The runtime can bind them to pre_image / post_image for change analysis tools.",
+        "note": "Upload two auxiliary images here. The runtime can bind them to pre_image / post_image for change analysis tools, and it can also use time1_image as an optional NIR raster for CloudRemoval.",
         "input_keys": ["time1_image", "time2_image"],
     },
 ]
@@ -94,6 +94,10 @@ TOOL_ARG_BINDINGS = {
     "RegionAttributeDescription": {"image": "primary_image"},
     "SegmentObjectPixels": {"image": "primary_image"},
     "ObjectDetection": {"image": "primary_image"},
+    "CloudRemoval": {
+        "image": "primary_image",
+        "nir_image": "time1_image",
+    },
     "GetBboxFromGeotiff": {"geotiff": "primary_image"},
     "DisplayOnGeotiff": {"geotiff": "primary_image"},
     "ChangeDetection": {
@@ -109,6 +113,7 @@ TOOL_ARG_BINDINGS = {
 TOOL_DEFAULT_ARGUMENTS = {
     "AddText": {"color": "green"},
     "TVDIAnalysis": {"output_path": "tvdi_result.tif"},
+    "CloudRemoval": {"output_path": "cloud_removed_result.tif"},
 }
 
 GPKG_REQUIRED_TOOLS = {

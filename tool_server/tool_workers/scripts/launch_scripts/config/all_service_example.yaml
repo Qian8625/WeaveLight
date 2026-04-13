@@ -258,3 +258,16 @@ tool_worker_config:
         port: 20023
         host: "0.0.0.0"
         save_path: OpenEarthAgent/tool_server/tool_workers/tools_output
+
+  - CloudRemoval:
+      worker_name: CloudRemoval
+      job_name: cloud_removal
+      calculate_type: control
+      cmd:
+        script-addr: ./online_workers/CloudRemoval_worker.py
+        port: 20031
+        host: "0.0.0.0"
+        emrdm-root: ../../models/EMRDM
+        config-path: ../../models/cpk/cuhk-20260410T131636Z-3-001/cuhk/configs/2024-11-09T08-59-25-project.yaml
+        model-path: ../../models/cpk/cuhk-20260410T131636Z-3-001/cuhk/checkpoints/last.ckpt
+        save_path: ./tools_output

@@ -327,3 +327,18 @@ tool_worker_config:
           script-addr: ./online_workers/TimeSeriesAssetRetriever_worker.py
           port: 20030
           host: "0.0.0.0"
+
+  - CloudRemoval:
+        worker_name: CloudRemoval
+        job_name: cloud_removal
+        calculate_type: control
+        conda_env: tool1_backup_20260410_emrdm
+        cuda_visible_devices: "1"
+        cmd:
+          script-addr: /home/ubuntu/01_Code/OpenEarthAgent_wys/tool_server/tool_workers/online_workers/CloudRemoval_worker.py
+          port: 20031
+          host: "0.0.0.0"
+          emrdm-root: /home/ubuntu/01_Code/OpenEarthAgent_wys/models/EMRDM
+          config-path: /home/ubuntu/01_Code/OpenEarthAgent_wys/models/cpk/cuhk-20260410T131636Z-3-001/cuhk/configs/2024-11-09T08-59-25-project.yaml
+          model-path: /home/ubuntu/01_Code/OpenEarthAgent_wys/models/cpk/cuhk-20260410T131636Z-3-001/cuhk/checkpoints/last.ckpt
+          save_path: /home/ubuntu/01_Code/OpenEarthAgent_wys/tool_server/tool_workers/tools_output

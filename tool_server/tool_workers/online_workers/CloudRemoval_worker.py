@@ -526,9 +526,10 @@ class CloudRemovalWorker(BaseToolWorker):
                 "name": self.model_name,
                 "description": (
                     "Remove clouds from a remote-sensing image using an EMRDM backend. "
-                    "Current configured backend uses the CUHK RGB+NIR checkpoint and expects either a 4-band RGB+NIR image, "
-                    "or a normal RGB image with an optional single-band `nir_image`. If `nir_image` is omitted, "
-                    "the worker can synthesize a testing-only pseudo-NIR channel so you can verify the environment and preview the effect. "
+                    "Current configured backend uses a normal RGB image"
+                    # "Current configured backend uses the CUHK RGB+NIR checkpoint and expects either a 4-band RGB+NIR image, "
+                    # "or a normal RGB image with an optional single-band `nir_image`. If `nir_image` is omitted, "
+                    # "the worker can synthesize a testing-only pseudo-NIR channel so you can verify the environment and preview the effect. "
                     "The tool returns a primary output file and a PNG preview."
                 ),
                 "parameters": {
@@ -541,13 +542,13 @@ class CloudRemovalWorker(BaseToolWorker):
                                 "a 3-band TIFF, or a 4-band RGB+NIR TIFF."
                             ),
                         },
-                        "nir_image": {
-                            "type": "string",
-                            "description": (
-                                "Optional single-band NIR image path used to build a true RGB+NIR input. "
-                                "If omitted and the main image is RGB-only, a pseudo-NIR channel is synthesized for testing."
-                            ),
-                        },
+                        # "nir_image": {
+                        #     "type": "string",
+                        #     "description": (
+                        #         "Optional single-band NIR image path used to build a true RGB+NIR input. "
+                        #         "If omitted and the main image is RGB-only, a pseudo-NIR channel is synthesized for testing."
+                        #     ),
+                        # },
                         "output_path": {
                             "type": "string",
                             "description": (

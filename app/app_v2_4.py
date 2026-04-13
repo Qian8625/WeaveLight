@@ -82,6 +82,10 @@ TOOL_ARG_BINDINGS = {
     "RegionAttributeDescription": {"image": "primary_image"},
     "SegmentObjectPixels": {"image": "primary_image"},
     "ObjectDetection": {"image": "primary_image"},
+    "CloudRemoval": {
+        "image": "primary_image",
+        "nir_image": "time1_image",
+    },
     "GetBboxFromGeotiff": {"geotiff": "primary_image"},
     "DisplayOnGeotiff": {"geotiff": "primary_image"},
     "ChangeDetection": {"pre_image": "time1_image", "post_image": "time2_image"},
@@ -93,6 +97,7 @@ TOOL_ARG_BINDINGS = {
 TOOL_DEFAULT_ARGUMENTS = {
     "AddText": {"color": "green"},
     "TVDIAnalysis": {"output_path": "tvdi_result.tif"},
+    "CloudRemoval": {"output_path": "cloud_removed_result.tif"},
 }
 
 GPKG_REQUIRED_TOOLS = {

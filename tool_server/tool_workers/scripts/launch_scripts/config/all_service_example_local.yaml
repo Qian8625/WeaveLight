@@ -175,7 +175,7 @@ tool_worker_config:
       cuda_visible_devices: "1"  
       cmd:
         script-addr: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/online_workers/ChangeDetection_worker.py
-        model_base: /home/ubuntu/00_CPK/TEOChat
+        model_base: /home/ubuntu/00_CPK/TEOChat/
         port: 20015
         host: "0.0.0.0"
   
@@ -327,6 +327,9 @@ tool_worker_config:
           script-addr: ./online_workers/TimeSeriesAssetRetriever_worker.py
           port: 20030
           host: "0.0.0.0"
+          excel-path: /home/ubuntu/01_Code/OpenEarthAgent/database/database.xlsx
+          image-base-dir: /home/ubuntu/01_Code/OpenEarthAgent/data/train_part1/
+          metadata-base-dir: /home/ubuntu/01_Code/OpenEarthAgent/database/
 
   - CloudRemoval:
         worker_name: CloudRemoval
@@ -335,10 +338,11 @@ tool_worker_config:
         conda_env: tool1_backup_20260410_emrdm
         cuda_visible_devices: "1"
         cmd:
-          script-addr: /home/ubuntu/01_Code/OpenEarthAgent_wys/tool_server/tool_workers/online_workers/CloudRemoval_worker.py
+          script-addr: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/online_workers/CloudRemoval_worker.py
           port: 20031
           host: "0.0.0.0"
-          emrdm-root: /home/ubuntu/01_Code/OpenEarthAgent_wys/models/EMRDM
-          config-path: /home/ubuntu/01_Code/OpenEarthAgent_wys/models/cpk/cuhk-20260410T131636Z-3-001/cuhk/configs/2024-11-09T08-59-25-project.yaml
-          model-path: /home/ubuntu/01_Code/OpenEarthAgent_wys/models/cpk/cuhk-20260410T131636Z-3-001/cuhk/checkpoints/last.ckpt
-          save_path: /home/ubuntu/01_Code/OpenEarthAgent_wys/tool_server/tool_workers/tools_output
+          emrdm-root: /home/ubuntu/01_Code/OpenEarthAgent/models/EMRDM
+          config-path: /home/ubuntu/01_Code/OpenEarthAgent/models/cpk/cuhk-20260410T131636Z-3-001/cuhk/configs/2024-11-09T08-59-25-project.yaml
+          model-path: /home/ubuntu/01_Code/OpenEarthAgent/models/cpk/cuhk-20260410T131636Z-3-001/cuhk/checkpoints/last.ckpt
+          save_path: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/tools_output
+

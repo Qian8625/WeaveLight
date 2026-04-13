@@ -36,4 +36,4 @@
     # 
 5. 在 app/app_new.py文件中添加相关的示例进行测试（保存图片为png格式，tiff格式有点问题）
     # 
-
+6. 涉及到参数输入输出，需要在app_new.py中添加 TOOL_ARG_BINDINGS、GPKG_REQUIRED_TOOLS等工具的输入参数映射

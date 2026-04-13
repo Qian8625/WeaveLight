@@ -1,14 +1,18 @@
 import argparse
+import base64
 import os
 import uuid
 import warnings
+from io import BytesIO
 from pathlib import Path
 from typing import Optional, Tuple
 
 import cv2
 import numpy as np
 import rasterio
+from PIL import Image
 from rasterio.errors import NotGeoreferencedWarning
+from rasterio.io import MemoryFile
 from scipy.ndimage import uniform_filter
 
 from tool_server.tool_workers.online_workers.base_tool_worker import BaseToolWorker
@@ -110,7 +114,7 @@ def apply_clahe(
 
 
 def ensure_gray(img: np.ndarray) -> np.ndarray:
-    """Convert PNG arrays to grayscale."""
+    """Convert image arrays to grayscale."""
     if img.ndim == 2:
         return img
     if img.ndim == 3:
@@ -120,6 +124,65 @@ def ensure_gray(img: np.ndarray) -> np.ndarray:
     raise ValueError(f"Unsupported image shape: {img.shape}")
 
 
+def decode_base64_image(image_input: str) -> bytes:
+    """
+    Decode plain base64 or data URL image string into bytes.
+    """
+    if not isinstance(image_input, str) or not image_input.strip():
+        raise ValueError("image must be a non-empty string.")
+
+    payload = image_input.strip()
+    if payload.startswith("data:"):
+        if "," not in payload:
+            raise ValueError("Invalid data URL image input.")
+        payload = payload.split(",", 1)[1]
+
+    try:
+        return base64.b64decode(payload)
+    except Exception as e:
+        raise ValueError(f"Failed to decode base64 image input: {e}") from e
+
+
+def _read_raster_band(src, band_index: int) -> Tuple[np.ndarray, Optional[dict]]:
+    profile = src.profile.copy()
+
+    if not (1 <= band_index <= src.count):
+        raise ValueError(f"band_index must be in [1, {src.count}], got {band_index}")
+
+    img = src.read(band_index).astype(np.float32)
+
+    nodata = src.nodata
+    if nodata is not None:
+        img = np.where(img == nodata, np.nan, img)
+
+    mask = src.read_masks(band_index) == 0
+    img[mask] = np.nan
+
+    return img, profile
+
+
+def _read_display_bytes(image_bytes: bytes) -> Tuple[np.ndarray, str]:
+    """
+    Read PNG/JPG/JPEG-like bytes using PIL and convert to grayscale float32.
+    """
+    with Image.open(BytesIO(image_bytes)) as img:
+        fmt = (img.format or "PNG").upper()
+        img = img.convert("L")
+        arr = np.asarray(img).astype(np.float32)
+
+    fmt_to_ext = {
+        "PNG": ".png",
+        "JPEG": ".jpg",
+        "JPG": ".jpg",
+        "BMP": ".bmp",
+        "WEBP": ".webp",
+        "TIFF": ".tiff",
+        "TIF": ".tif",
+    }
+    ext = fmt_to_ext.get(fmt, ".png")
+    return arr, ext
+
+
 def infer_input_unit(
     img: np.ndarray,
     source_ext: str,
@@ -127,14 +190,14 @@ def infer_input_unit(
 ) -> str:
     """
     auto inference:
-    - PNG -> display
+    - PNG/JPG/JPEG/BMP/WEBP -> display
     - TIFF -> db if many negatives / typical dB range, else linear
     """
     requested_unit = requested_unit.lower()
     if requested_unit != "auto":
         return requested_unit
 
-    if source_ext == ".png":
+    if source_ext in {".png", ".jpg", ".jpeg", ".bmp", ".webp"}:
         return "display"
 
     valid = img[np.isfinite(img)]
@@ -150,45 +213,54 @@ def infer_input_unit(
     return "linear"
 
 
-def read_input_image(file_path: str, band_index: int = 1) -> Tuple[np.ndarray, Optional[dict], str]:
+def read_input_image(image_input: str, band_index: int = 1) -> Tuple[np.ndarray, Optional[dict], str, str]:
     """
-    Read PNG or TIFF and return:
+    Read image from either:
+      1) local file path
+      2) base64 / data URL
+
+    Returns:
         img: float32, shape(H, W)
         profile: rasterio profile or None
-        ext: '.png' / '.tif' / '.tiff'
+        ext: source extension
+        input_name_hint: stem-like name used for default output naming
     """
-    path = Path(file_path)
-    ext = path.suffix.lower()
+    if os.path.exists(image_input):
+        path = Path(image_input)
+        ext = path.suffix.lower()
 
-    if ext == ".png":
-        img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-        if img is None:
-            raise FileNotFoundError(f"Unable to read PNG: {file_path}")
-        img = ensure_gray(img)
-        return img.astype(np.float32), None, ext
+        if ext in [".png", ".jpg", ".jpeg", ".bmp", ".webp"]:
+            with Image.open(path) as img:
+                img = img.convert("L")
+                arr = np.asarray(img).astype(np.float32)
+            return arr, None, ext, path.stem
 
-    if ext in [".tif", ".tiff"]:
-        with rasterio.open(path) as src:
-            profile = src.profile.copy()
+        if ext in [".tif", ".tiff"]:
+            with rasterio.open(path) as src:
+                arr, profile = _read_raster_band(src, band_index)
+            return arr, profile, ext, path.stem
 
-            if not (1 <= band_index <= src.count):
-                raise ValueError(f"band_index must be in [1, {src.count}], got {band_index}")
+        raise ValueError("Only PNG/JPG/JPEG/BMP/WEBP/TIFF/TIF inputs are supported.")
 
-            img = src.read(band_index).astype(np.float32)
+    # Otherwise, try base64 / data URL
+    image_bytes = decode_base64_image(image_input)
 
-            nodata = src.nodata
-            if nodata is not None:
-                img = np.where(img == nodata, np.nan, img)
+    # First try TIFF / raster-style bytes with rasterio MemoryFile
+    try:
+        with MemoryFile(image_bytes) as memfile:
+            with memfile.open() as src:
+                arr, profile = _read_raster_band(src, band_index)
+                ext = ".tiff"
+                return arr, profile, ext, f"inline_image_{uuid.uuid4().hex[:8]}"
+    except Exception:
+        pass
 
-            mask = src.read_masks(band_index) == 0
-            img[mask] = np.nan
-
-            return img, profile, ext
-
-    raise ValueError("Only PNG / TIFF inputs are supported.")
+    # Fallback to common display image bytes
+    arr, ext = _read_display_bytes(image_bytes)
+    return arr, None, ext, f"inline_image_{uuid.uuid4().hex[:8]}"
 
 
-def build_output_path(base_dir: Path, output_path: str, input_path: str) -> Path:
+def build_output_path(base_dir: Path, output_path: str, input_name_hint: str) -> Path:
     """
     Always output PNG.
     """
@@ -198,8 +270,8 @@ def build_output_path(base_dir: Path, output_path: str, input_path: str) -> Path
             out = out.with_suffix(".png")
         return out
 
-    input_name = Path(input_path).stem
-    return base_dir / f"{input_name}_sar_preprocessed.png"
+    safe_name = input_name_hint if input_name_hint else f"inline_image_{uuid.uuid4().hex[:8]}"
+    return base_dir / f"{safe_name}_sar_preprocessed.png"
 
 
 def save_png(output_path: Path, img_array: np.ndarray):
@@ -262,12 +334,13 @@ class SARPreprocessingWorker(BaseToolWorker):
         return save_dir
 
     def generate(self, params):
-        if "input_path" not in params:
-            msg = "Missing required parameter: 'input_path'."
+        image_input = params.get("image", params.get("input_path", None))
+        if image_input is None:
+            msg = "Missing required parameter: image"
             logger.error(msg)
             return {"text": msg, "error_code": 2}
 
-        input_path = str(params["input_path"]).strip()
+        image_input = str(image_input).strip()
         output_path = str(params.get("output_path", "")).strip()
 
         filter_window = int(params.get("filter_window", 5))
@@ -293,8 +366,19 @@ class SARPreprocessingWorker(BaseToolWorker):
             if visualization_unit not in {"auto", "linear", "db", "display"}:
                 raise ValueError("visualization_unit must be one of: auto, linear, db, display.")
 
-            raw_img, profile, ext = read_input_image(input_path, band_index=band_index)
+            raw_img, profile, ext, input_name_hint = read_input_image(image_input, band_index=band_index)
             actual_input_unit = infer_input_unit(raw_img, ext, input_unit)
+
+            if os.path.exists(image_input):
+                logger.info(f"Running {self.model_name} on image={image_input}")
+            else:
+                logger.info(f"Running {self.model_name} on image=<base64_or_data_url>")
+
+            logger.info(
+                f"band_index={band_index}, input_unit={actual_input_unit}, "
+                f"visualization_unit={visualization_unit}, filter_window={filter_window}, "
+                f"noise_scale={noise_scale}"
+            )
 
             # preprocessing domain
             if actual_input_unit == "db":
@@ -302,7 +386,7 @@ class SARPreprocessingWorker(BaseToolWorker):
             elif actual_input_unit == "linear":
                 proc_linear = raw_img.astype(np.float32)
             else:
-                # display-domain PNG-like image
+                # display-domain image
                 proc_linear = raw_img.astype(np.float32) / 255.0
 
             denoised_linear = lee_filter(
@@ -344,7 +428,7 @@ class SARPreprocessingWorker(BaseToolWorker):
             )
 
             save_dir = self._get_save_dir()
-            final_output_path = build_output_path(save_dir, output_path, input_path)
+            final_output_path = build_output_path(save_dir, output_path, input_name_hint)
             save_png(final_output_path, enhanced)
 
             valid = raw_img[np.isfinite(raw_img)]
@@ -368,7 +452,7 @@ class SARPreprocessingWorker(BaseToolWorker):
 
         except Exception as e:
             error_msg = f"Error in {self.model_name}: {e}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             return {"text": error_msg, "error_code": 1}
 
     def get_tool_instruction(self):
@@ -377,20 +461,27 @@ class SARPreprocessingWorker(BaseToolWorker):
             "function": {
                 "name": self.model_name,
                 "description": (
-                    "Preprocess a SAR image from PNG or TIFF and save the output as a PNG image. "
-                    "Supports grayscale conversion, optional band selection for TIFF, "
-                    "Lee speckle filtering, percentile stretch, and CLAHE enhancement."
+                    "Preprocess a SAR image and save the output as a PNG image. "
+                    "The input image can be either a local file path or a base64/data-URL image string. "
+                    "Supports PNG/JPG/JPEG/BMP/WEBP display images and TIFF/TIF raster images. "
+                    "Includes optional band selection for TIFF, Lee speckle filtering, "
+                    "percentile stretch, and CLAHE enhancement."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "input_path": {
+                        "image": {
                             "type": "string",
-                            "description": "Path to input image. Supports PNG, TIFF, or TIF."
+                            "description": (
+                                "Input image as a local file path or a base64/data-URL string. "
+                                "Supports PNG/JPG/JPEG/BMP/WEBP/TIFF/TIF."
+                            )
                         },
                         "output_path": {
                             "type": "string",
-                            "description": "Optional relative output PNG path. If omitted, a default PNG name is generated."
+                            "description": (
+                                "Optional relative output PNG path. If omitted, a default PNG name is generated."
+                            )
                         },
                         "band_index": {
                             "type": "integer",
@@ -430,7 +521,7 @@ class SARPreprocessingWorker(BaseToolWorker):
                             "description": "Upper percentile for contrast stretch. Default is 99.0."
                         }
                     },
-                    "required": ["input_path"]
+                    "required": ["image"]
                 }
             }
         }

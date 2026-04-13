@@ -3,7 +3,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 import pandas as pd
 import requests
@@ -34,6 +34,8 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
         describe_tool_name="RegionAttributeDescription",
         detect_tool_name="TextToBbox",
         model_semaphore=None,
+        image_base_dir=None,
+        metadata_base_dir=None, 
         wait_timeout=120.0,
         task_timeout=120.0,
     ):
@@ -45,6 +47,9 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
         self.describe_tool_name = describe_tool_name
         self.detect_tool_name = detect_tool_name
         self.tool_addr_cache: Dict[str, str] = {}
+
+        self.image_base_dir = Path(image_base_dir).expanduser().resolve() if image_base_dir else None
+        self.metadata_base_dir = Path(metadata_base_dir).expanduser().resolve() if metadata_base_dir else None
 
         super().__init__(
             controller_addr,
@@ -72,6 +77,70 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
         self._load_catalog()
         logger.info(f"{self.model_name} initialized successfully.")
 
+    def _normalize_path(self, x: Any, base_dir: Optional[Path]) -> Optional[str]:
+        if pd.isna(x):
+            return None
+
+        s = str(x).strip()
+        if not s or s.lower() in {"nan", "none", "null"}:
+            return None
+
+        p = Path(s).expanduser()
+
+        if p.is_absolute():
+            return str(p.resolve())
+
+        if base_dir is not None:
+            return str((base_dir / p).resolve())
+
+        return str((self.excel_catalog_path.parent / p).resolve())
+
+    def _parse_time_value(self, value: Any) -> Tuple[pd.Timestamp, str]:
+        """
+        Parse a catalog time value robustly.
+
+        Returns:
+            (timestamp, precision)
+        precision in {"month", "day", "datetime", "unknown"}
+        """
+        if pd.isna(value):
+            return pd.NaT, "unknown"
+
+        # already datetime-like
+        if isinstance(value, pd.Timestamp):
+            return value, "datetime"
+
+        # Excel / numeric-like handling
+        s = str(value).strip()
+
+        # handle strings like "20230624.0"
+        if re.fullmatch(r"\d+\.0", s):
+            s = s.split(".")[0]
+
+        # YYYYMMDD
+        if re.fullmatch(r"\d{8}", s):
+            ts = pd.to_datetime(s, format="%Y%m%d", errors="coerce")
+            return ts, "day"
+
+        # YYYYMM
+        if re.fullmatch(r"\d{6}", s):
+            ts = pd.to_datetime(s, format="%Y%m", errors="coerce")
+            return ts, "month"
+
+        # YYYY-MM-DD
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+            ts = pd.to_datetime(s, format="%Y-%m-%d", errors="coerce")
+            return ts, "day"
+
+        # YYYY-MM
+        if re.fullmatch(r"\d{4}-\d{2}", s):
+            ts = pd.to_datetime(s, format="%Y-%m", errors="coerce")
+            return ts, "month"
+
+        # fallback to pandas general parser
+        ts = pd.to_datetime(s, errors="coerce")
+        return ts, "datetime" if pd.notna(ts) else "unknown"
+
     def _load_catalog(self):
         if not self.excel_catalog_path.exists():
             raise FileNotFoundError(f"Excel catalog not found: {self.excel_catalog_path}")
@@ -82,22 +151,23 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
         if missing:
             raise ValueError(f"Missing required columns in Excel: {missing}")
 
-        df["Time_raw"] = df["Time"].astype(str)
-        df["Time_dt"] = pd.to_datetime(df["Time"], errors="coerce")
+        df["Time_raw"] = df["Time"].astype(str).str.strip()
+
+        parsed = df["Time"].map(self._parse_time_value)
+        df["Time_dt"] = parsed.map(lambda x: x[0])
+        df["Time_precision"] = parsed.map(lambda x: x[1])
+
         invalid_count = int(df["Time_dt"].isna().sum())
         if invalid_count > 0:
             logger.warning(f"{invalid_count} rows have invalid Time and will be ignored.")
 
         df = df.dropna(subset=["Time_dt"]).copy()
 
-        def normalize_path(x: Any) -> str:
-            return str(Path(str(x)).expanduser().resolve())
+        df["Image_Path"] = df["Image_Path"].map(lambda x: self._normalize_path(x, self.image_base_dir))
+        df["Metadata_Path"] = df["Metadata_Path"].map(lambda x: self._normalize_path(x, self.metadata_base_dir))
 
-        df["Image_Path"] = df["Image_Path"].map(normalize_path)
-        df["Metadata_Path"] = df["Metadata_Path"].map(normalize_path)
-
-        df["image_exists"] = df["Image_Path"].map(lambda x: Path(x).exists())
-        df["metadata_exists"] = df["Metadata_Path"].map(lambda x: Path(x).exists())
+        df["image_exists"] = df["Image_Path"].map(lambda x: Path(x).exists() if x else False)
+        df["metadata_exists"] = df["Metadata_Path"].map(lambda x: Path(x).exists() if x else False)
 
         df = df.sort_values("Time_dt").reset_index(drop=True)
 
@@ -120,15 +190,31 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
     def _infer_match_mode(self, time_query: str, end_time: Optional[str], match_mode: str) -> str:
         if match_mode != "auto":
             return match_mode
+
         if end_time:
             return "range"
+
+        # compact formats
+        if re.fullmatch(r"\d{8}", time_query):
+            return "day"
+        if re.fullmatch(r"\d{6}", time_query):
+            return "month"
+
+        # standard formats
         if re.fullmatch(r"\d{4}-\d{2}$", time_query):
             return "month"
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}$", time_query):
             return "day"
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2})?$", time_query):
             return "exact"
+
         return "nearest"
+
+    def _parse_query_time(self, value: str) -> pd.Timestamp:
+        ts, _ = self._parse_time_value(value)
+        if pd.isna(ts):
+            raise ValueError(f"Invalid time query: {value}")
+        return ts
 
     def _query_by_time(
         self,
@@ -140,8 +226,11 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
         if self.catalog_df is None:
             raise ValueError("Catalog is not loaded")
 
+        if top_k <= 0:
+            raise ValueError("top_k must be >= 1")
+
         df = self.catalog_df
-        q = pd.to_datetime(time_query, errors="raise")
+        q = self._parse_query_time(time_query)
 
         if match_mode == "exact":
             matched = df[df["Time_dt"] == q]
@@ -159,7 +248,7 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
         elif match_mode == "range":
             if not end_time:
                 raise ValueError("end_time is required when match_mode='range'")
-            q_end = pd.to_datetime(end_time, errors="raise")
+            q_end = self._parse_query_time(end_time)
             if q_end < q:
                 raise ValueError("end_time must be >= time_query")
             matched = df[(df["Time_dt"] >= q) & (df["Time_dt"] <= q_end)]
@@ -213,7 +302,7 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
     # -----------------------------
     def _run_optional_analysis(
         self,
-        image_path: str,
+        image_path: Optional[str],
         post_action: str,
         target: Optional[str],
         attribute: Optional[str],
@@ -225,7 +314,7 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
                 "action": "none",
             }
 
-        if not Path(image_path).exists():
+        if not image_path or not Path(image_path).exists():
             return {
                 "enabled": True,
                 "action": post_action,
@@ -330,6 +419,7 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
         match_mode = str(params.get("match_mode", "auto")).strip().lower()
         end_time = params.get("end_time")
         top_k = int(params.get("top_k", 3))
+        only_existing = bool(params.get("only_existing", False))
 
         post_action = str(params.get("post_action", "none")).strip().lower()
         target = params.get("target")
@@ -342,11 +432,15 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
             match_mode = self._infer_match_mode(time_query, end_time, match_mode)
             matched_df = self._query_by_time(time_query, match_mode, end_time, top_k)
 
+            if only_existing:
+                matched_df = matched_df[matched_df["image_exists"] == True].copy()
+
             if matched_df.empty:
                 result = {
                     "message": f"No records found for time_query='{time_query}'.",
                     "time_query": time_query,
                     "match_mode": match_mode,
+                    "only_existing": only_existing,
                     "total_images": 0,
                     "post_action": post_action,
                     "assets": [],
@@ -362,18 +456,22 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
             for idx, (_, row) in enumerate(matched_df.iterrows(), start=1):
                 image_id = chr(ord("a") + idx - 1) if idx <= 26 else f"img_{idx}"
 
+                image_path = row["Image_Path"] if row["Image_Path"] else None
+                metadata_path = row["Metadata_Path"] if row["Metadata_Path"] else None
+
                 asset = {
                     "image_id": image_id,
                     "time": row["Time_raw"],
                     "time_normalized": row["Time_dt"].isoformat(),
-                    "image_path": row["Image_Path"],
-                    "metadata_path": row["Metadata_Path"],
+                    "time_precision": row.get("Time_precision", "unknown"),
+                    "image_path": image_path,
+                    "metadata_path": metadata_path,
                     "image_exists": bool(row["image_exists"]),
                     "metadata_exists": bool(row["metadata_exists"]),
                 }
 
                 analysis = self._run_optional_analysis(
-                    image_path=row["Image_Path"],
+                    image_path=image_path,
                     post_action=post_action,
                     target=target,
                     attribute=attribute,
@@ -390,6 +488,7 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
                 "message": f"Retrieved {len(assets)} asset(s).",
                 "time_query": time_query,
                 "match_mode": match_mode,
+                "only_existing": only_existing,
                 "total_images": len(assets),
                 "post_action": post_action,
                 "analysis_summary": {
@@ -407,10 +506,10 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
                 "error_code": 0,
             }
 
-            # 单图命中时，兼容现有 agent 的 current_image 传递方式
-            if len(assets) == 1 and assets[0]["image_exists"]:
+            # 单图命中时，兼容现有 agent 的 current_image / metadata_path 传递方式
+            if len(assets) == 1 and assets[0]["image_exists"] and assets[0]["image_path"]:
                 ret["image"] = assets[0]["image_path"]
-            if len(assets) == 1 and assets[0]["metadata_exists"]:
+            if len(assets) == 1 and assets[0]["metadata_exists"] and assets[0]["metadata_path"]:
                 ret["metadata_path"] = assets[0]["metadata_path"]
 
             return ret
@@ -435,7 +534,7 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
                     "properties": {
                         "time_query": {
                             "type": "string",
-                            "description": "Time query such as '2021-05', '2021-05-09', or '2021-05-09 10:30:00'."
+                            "description": "Time query such as '20230624', '202306', '2021-05', '2021-05-09', or '2021-05-09 10:30:00'."
                         },
                         "match_mode": {
                             "type": "string",
@@ -448,6 +547,10 @@ class TimeSeriesAssetRetrieverWorker(BaseToolWorker):
                         "top_k": {
                             "type": "integer",
                             "description": "Maximum number of matched assets to return. Default is 3."
+                        },
+                        "only_existing": {
+                            "type": "boolean",
+                            "description": "If true, only return assets whose image files actually exist. Default is false."
                         },
                         "post_action": {
                             "type": "string",
@@ -485,6 +588,8 @@ if __name__ == "__main__":
     parser.add_argument("--describe-tool-name", type=str, default="RegionAttributeDescription")
     parser.add_argument("--detect-tool-name", type=str, default="TextToBbox")
     parser.add_argument("--no-register", action="store_true")
+    parser.add_argument("--image-base-dir", type=str, default=None)
+    parser.add_argument("--metadata-base-dir", type=str, default=None)
     args = parser.parse_args()
 
     worker = TimeSeriesAssetRetrieverWorker(
@@ -499,5 +604,7 @@ if __name__ == "__main__":
         count_tool_name=args.count_tool_name,
         describe_tool_name=args.describe_tool_name,
         detect_tool_name=args.detect_tool_name,
+        image_base_dir=args.image_base_dir,
+        metadata_base_dir=args.metadata_base_dir,   
     )
     worker.run()

@@ -22,4 +22,4 @@ python scripts/chat/chat.py
 
 # Gradio界面
 conda activate OEA
-python app/app_new.py
+python app/app_v1.py

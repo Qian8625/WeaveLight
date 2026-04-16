@@ -64,5 +64,7 @@ tool_server/tool_workers/~/
 .codex
 
 # Additional notes
-.md
+*.md
 app/BackUp/
+app/gradio_tmp/
+database/

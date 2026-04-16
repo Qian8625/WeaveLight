@@ -4,6 +4,7 @@ import re
 import torch
 import os
 import html
+import inspect
 from PIL import Image
 from datetime import datetime
 import rasterio
@@ -11,6 +12,8 @@ import numpy as np
 from tool_server.tool_workers.tool_manager.base_manager import ToolManager
 from tool_server.tf_eval.utils.rs_agent_prompt import RS_AGENT_PROMPT
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from tool_server.tool_workers.skills.router import route_skills
+from tool_server.tool_workers.skills.catalog import build_selected_skill_catalog
 
 os.environ["GRADIO_TEMP_DIR"] = os.path.join(os.getcwd(), "app", "gradio_tmp")
 
@@ -59,20 +62,14 @@ INPUT_SPECS = [
 INPUT_GROUPS = [
     {
         "tab": "General",
-        "title": "Single-scene workspace",
-        "note": "Upload one remote sensing image, photo, SAR preview, or GeoTIFF for detection, annotation, OCR, overlays, and general interpretation.",
         "input_keys": ["primary_image"],
     },
     {
         "tab": "TVDI",
-        "title": "Dual-raster TVDI analysis",
-        "note": "Upload both LST and NDVI rasters here. The runtime will bind them automatically to TVDIAnalysis(ndvi_path, lst_path, ...).",
         "input_keys": ["lst_image", "ndvi_image"],
     },
     {
         "tab": "Time Series",
-        "title": "Bi-temporal comparison",
-        "note": "Use paired inputs for pre/post change analysis. These files can be injected into tools such as ChangeDetection.",
         "input_keys": ["time1_image", "time2_image"],
     },
 ]
@@ -87,6 +84,10 @@ TOOL_ARG_BINDINGS = {
     "RegionAttributeDescription": {"image": "primary_image"},
     "SegmentObjectPixels": {"image": "primary_image"},
     "ObjectDetection": {"image": "primary_image"},
+    "CloudRemoval": {
+        "image": "primary_image",
+        "nir_image": "time1_image",
+    },
     "GetBboxFromGeotiff": {"geotiff": "primary_image"},
     "DisplayOnGeotiff": {"geotiff": "primary_image"},
     "ChangeDetection": {"pre_image": "time1_image", "post_image": "time2_image"},
@@ -98,34 +99,70 @@ TOOL_ARG_BINDINGS = {
 TOOL_DEFAULT_ARGUMENTS = {
     "AddText": {"color": "green"},
     "TVDIAnalysis": {"output_path": "tvdi_result.tif"},
+    "CloudRemoval": {"output_path": "cloud_removed_result.tif"},
 }
 
 GPKG_REQUIRED_TOOLS = {
-    "AddPoisLayer", "ComputeDistance", "DisplayOnMap", "AddIndexLayer",
-    "AddDEMLayer", "ComputeIndexChange", "ShowIndexLayer", "DisplayOnGeotiff",
+    "AddPoisLayer",
+    "ComputeDistance",
+    "DisplayOnMap",
+    "AddIndexLayer",
+    "AddDEMLayer",
+    "ComputeIndexChange",
+    "ShowIndexLayer",
+    "DisplayOnGeotiff",
 }
 
 
 class LLM:
     def __init__(self, pretrained):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = AutoModelForCausalLM.from_pretrained(pretrained, dtype=torch.bfloat16, trust_remote_code=True).to(self.device)
-        self.tokenizer = AutoTokenizer.from_pretrained(pretrained, use_fast=True, trust_remote_code=True)
+        self.model = AutoModelForCausalLM.from_pretrained(
+            pretrained, dtype=torch.bfloat16, trust_remote_code=True
+        ).to(self.device)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            pretrained, use_fast=True, trust_remote_code=True
+        )
         self.tokenizer.padding_side = "left"
         self.system_prompt = RS_AGENT_PROMPT
         self.max_new_tokens = 256
 
-    def prepend_system_prompt(self, conversation):
+    def _build_system_prompt(self, extra_system_prompt: str = "") -> str:
+        if extra_system_prompt and extra_system_prompt.strip():
+            return self.system_prompt + "\n\n" + extra_system_prompt.strip()
+        return self.system_prompt
+
+    def prepend_system_prompt(self, conversation, extra_system_prompt: str = ""):
+        final_system_prompt = self._build_system_prompt(extra_system_prompt)
+
+        conversation = list(conversation)
+
         if not conversation or conversation[0]["role"] != "system":
-            conversation = [{"role": "system", "content": self.system_prompt}] + conversation
+            conversation = [{"role": "system", "content": final_system_prompt}] + conversation
+        else:
+            conversation[0] = {"role": "system", "content": final_system_prompt}
+
         return conversation
 
-    def generate(self, conversation):
-        conversation = self.prepend_system_prompt(conversation)
-        text = self.tokenizer.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
+    def generate(self, conversation, extra_system_prompt: str = ""):
+        conversation = self.prepend_system_prompt(
+            conversation,
+            extra_system_prompt=extra_system_prompt
+        )
+
+        text = self.tokenizer.apply_chat_template(
+            conversation,
+            tokenize=False,
+            add_generation_prompt=True
+        )
         inputs = self.tokenizer(text, return_tensors="pt").to(self.device)
+
         with torch.no_grad():
-            outputs = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens)
+            outputs = self.model.generate(
+                **inputs,
+                max_new_tokens=self.max_new_tokens
+            )
+
         generated_ids = outputs[0][inputs.input_ids.shape[-1]:]
         return self.tokenizer.decode(generated_ids, skip_special_tokens=True)
 
@@ -162,6 +199,8 @@ def extract_thought_and_actions(text: str):
         actions, _ = extract_actions(text)
         if actions is None:
             actions = []
+    if not isinstance(actions, list):
+        actions = []
     return thought, actions
 
 
@@ -187,7 +226,10 @@ def make_preview_if_tif(path):
                 if data.dtype != np.uint8:
                     data = np.nan_to_num(data)
                     data_min, data_max = np.nanmin(data), np.nanmax(data)
-                    data = ((data - data_min) / (data_max - data_min) * 255).astype(np.uint8) if data_max > data_min else np.zeros_like(data, dtype=np.uint8)
+                    if data_max > data_min:
+                        data = ((data - data_min) / (data_max - data_min) * 255).astype(np.uint8)
+                    else:
+                        data = np.zeros_like(data, dtype=np.uint8)
                 data = np.stack([data] * 3, axis=-1)
             if data.dtype != np.uint8:
                 data = np.clip(data, 0, 255).astype(np.uint8)
@@ -230,7 +272,9 @@ def detect_output_visual(tool_resp):
                 return found
     text = tool_resp.get("text", "")
     if isinstance(text, str):
-        for match in reversed(re.findall(r"([A-Za-z0-9_./\\-]+\.(?:png|jpg|jpeg|tif|tiff))", text, re.I)):
+        for match in reversed(
+            re.findall(r"([A-Za-z0-9_./\\-]+\.(?:png|jpg|jpeg|tif|tiff))", text, re.I)
+        ):
             found = resolve_existing_file(match)
             if found:
                 return found
@@ -245,30 +289,41 @@ def get_input_spec(key):
 
 
 def build_registry_from_args(flat_args):
+    expected = len(INPUT_SPECS) * 2
+    flat_args = list(flat_args or [])
+    if len(flat_args) < expected:
+        flat_args.extend([None] * (expected - len(flat_args)))
+
     registry, idx = {}, 0
     for spec in INPUT_SPECS:
-        registry[spec["key"]] = normalize_uploaded_input(flat_args[idx], flat_args[idx + 1], sample_aliases=spec.get("sample_aliases"))
+        registry[spec["key"]] = normalize_uploaded_input(
+            flat_args[idx], flat_args[idx + 1], sample_aliases=spec.get("sample_aliases")
+        )
         idx += 2
     return registry
 
 
 def describe_registry_for_prompt(registry):
-    return [f"- {spec['key']}: {spec['description']}" for spec in INPUT_SPECS if registry.get(spec["key"])]
+    return [
+        f"- {spec['key']}: {spec['description']}"
+        for spec in INPUT_SPECS
+        if registry.get(spec["key"])
+    ]
 
 
 def build_initial_user_message(user_question, registry):
     lines = [user_question.strip()]
     input_lines = describe_registry_for_prompt(registry)
     if input_lines:
-        lines.extend(["", "Available uploaded inputs:", *input_lines, "Use the most appropriate tool and bind these uploaded inputs to the correct tool arguments."])
+        lines.extend(
+            [
+                "",
+                "Available uploaded inputs:",
+                *input_lines,
+                "Use the most appropriate tool and bind these uploaded inputs to the correct tool arguments.",
+            ]
+        )
     return "\n".join(lines)
-
-
-def choose_visual_image(registry):
-    for key in ["primary_image", "time2_image", "time1_image", "lst_image", "ndvi_image"]:
-        if registry.get(key):
-            return registry[key]
-    return None
 
 
 def inject_runtime_arguments(api_name, api_args, registry, current_gpkg):
@@ -285,6 +340,9 @@ def inject_runtime_arguments(api_name, api_args, registry, current_gpkg):
 
 
 def update_registry_with_tool_response(registry, api_name, tool_resp):
+    if not isinstance(tool_resp, dict):
+        return registry
+
     if api_name == "TVDIAnalysis":
         out = tool_resp.get("output_path") or detect_output_visual(tool_resp)
         if out:
@@ -302,110 +360,12 @@ def make_example(question, **paths):
     return row
 
 
-def build_brand_panel_html():
-    return f"""
-    <div class="brand-panel">
-        <div class="brand-shell">
-            <div class="brand-mark">
-                <img src="./assets/nwpu-logo.svg" alt="NWPU Logo" />
-            </div>
-            <div class="brand-copy">
-                <div class="panel-kicker">Remote Sensing Workspace</div>
-                <h1>WeavLight Agent</h1>
-                <p>Structured uploads, explicit tool traces, and live preview for multi-image remote sensing tasks.</p>
-            </div>
-        </div>
-        <div class="stat-row">
-            <div class="stat-card">
-                <span>Input Roles</span>
-                <strong>{len(INPUT_SPECS)}</strong>
-            </div>
-            <div class="stat-card">
-                <span>Max Rounds</span>
-                <strong>{MAX_TOOL_ROUNDS}</strong>
-            </div>
-            <div class="stat-card">
-                <span>Preview</span>
-                <strong>GeoTIFF + PNG</strong>
-            </div>
-        </div>
-    </div>
-    """
-
-
-def build_workflow_panel_html():
-    return """
-    <div class="workflow-panel">
-        <div class="panel-kicker">Workflow</div>
-        <div class="workflow-step">
-            <span>1</span>
-            <div>
-                <strong>Select the right input mode</strong>
-                <p>Choose General, TVDI, or Time Series based on the task type.</p>
-            </div>
-        </div>
-        <div class="workflow-step">
-            <span>2</span>
-            <div>
-                <strong>Describe the objective</strong>
-                <p>Ask for analysis, visualization, distance estimation, or raster processing in plain language.</p>
-            </div>
-        </div>
-        <div class="workflow-step">
-            <span>3</span>
-            <div>
-                <strong>Inspect the execution trace</strong>
-                <p>Each round logs the selected tool, injected arguments, observations, and final answer.</p>
-            </div>
-        </div>
-    </div>
-    """
-
-
-def build_runtime_panel_html():
-    return """
-    <div class="runtime-panel">
-        <div class="panel-kicker">Runtime Notes</div>
-        <div class="runtime-item">
-            <strong>Auto binding</strong>
-            <p>Uploaded files are mapped into tool arguments from the registry, so users do not need to pass raw paths manually.</p>
-        </div>
-        <div class="runtime-item">
-            <strong>GeoTIFF preview</strong>
-            <p>Raster outputs are converted to lightweight preview PNGs for display while the original file remains downloadable.</p>
-        </div>
-        <div class="runtime-item">
-            <strong>Round visibility</strong>
-            <p>The center panel separates tool calls, observations, reasoning, and final answers for easier debugging.</p>
-        </div>
-    </div>
-    """
-
-
 def render_empty_chat_html():
     return """
     <div class="chat-area">
         <div class="empty-chat-card">
             <div class="panel-kicker">Mission Console</div>
             <h3>Ready for a new remote sensing task</h3>
-            <p>Upload the required inputs, describe the objective, and this panel will stream the agent trace round by round.</p>
-            <div class="placeholder-grid">
-                <div class="placeholder-step">
-                    <span>01</span>
-                    <strong>Choose inputs</strong>
-                    <p>General image, TVDI raster pair, or time-series comparison.</p>
-                </div>
-                <div class="placeholder-step">
-                    <span>02</span>
-                    <strong>Run the agent</strong>
-                    <p>The model selects tools and injects uploaded assets into the correct arguments.</p>
-                </div>
-                <div class="placeholder-step">
-                    <span>03</span>
-                    <strong>Review outputs</strong>
-                    <p>Check the live preview on the right and download the latest generated file.</p>
-                </div>
-            </div>
         </div>
     </div>
     """
@@ -446,10 +406,12 @@ def render_chat_html(messages):
         role = msg.get("role", "assistant")
         content = msg.get("content", "")
         bubble_class, badge_label, badge_class = classify_chat_message(role, content)
+
         if role == "user":
             body = html.escape(content)
             blocks.append(
-                f'<div class="{bubble_class}"><div class="msg-meta"><span class="msg-badge {badge_class}">{badge_label}</span>'
+                f'<div class="{bubble_class}"><div class="msg-meta">'
+                f'<span class="msg-badge {badge_class}">{badge_label}</span>'
                 f'<span class="msg-heading">Task</span></div><pre>{body}</pre></div>'
             )
             continue
@@ -461,58 +423,164 @@ def render_chat_html(messages):
         meta_items.append(f'<span class="msg-badge {badge_class}">{badge_label}</span>')
         meta_items.append(f'<span class="msg-heading">{html.escape(heading)}</span>')
         body_html = f"<pre>{html.escape(body)}</pre>" if body else ""
-        blocks.append(f'<div class="{bubble_class}"><div class="msg-meta">{"".join(meta_items)}</div>{body_html}</div>')
+        blocks.append(
+            f'<div class="{bubble_class}"><div class="msg-meta">{"".join(meta_items)}</div>{body_html}</div>'
+        )
     blocks.append("</div>")
     return "".join(blocks)
 
 
-Model = LLM(PRETRAINED_PATH)
+Model = None
+MODEL_INIT_ERROR = None
 tool_manager = ToolManager()
+
+
+def normalize_tool_response(tool_resp, api_name):
+    if isinstance(tool_resp, dict):
+        return tool_resp
+
+    text = (
+        f"{api_name} returned empty response."
+        if tool_resp is None
+        else f"{api_name} returned non-dict response: {tool_resp}"
+    )
+    return {"error_code": -1, "text": text}
+
+
+def get_model():
+    global Model, MODEL_INIT_ERROR
+
+    if Model is None and MODEL_INIT_ERROR is None:
+        try:
+            Model = LLM(PRETRAINED_PATH)
+        except Exception as exc:
+            MODEL_INIT_ERROR = exc
+
+    if MODEL_INIT_ERROR is not None:
+        raise RuntimeError(f"模型初始化失败: {MODEL_INIT_ERROR}")
+
+    return Model
 
 
 def run_agent(user_question, *flat_args):
     registry = build_registry_from_args(flat_args)
-    current_visual_image = choose_visual_image(registry)
     current_gpkg = None
     chat_msgs = [{"role": "user", "content": user_question}]
+
+
+    candidate_skills = route_skills(
+        user_query=user_question,
+        input_registry=registry,
+        top_k=3,
+        min_score=2.5,
+        score_margin=0.5,
+    )
+    selected_skill_prompt = build_selected_skill_catalog(candidate_skills)
 
     initial_message = build_initial_user_message(user_question, registry)
     conversation = [{"role": "user", "content": initial_message}]
 
-    def current_preview():
-        latest = registry.get("latest_output") or registry.get("tvdi_result") or current_visual_image
-        return make_preview_if_tif(latest) if latest and os.path.isfile(latest) else None
+    if candidate_skills:
+            router_text = "\n".join(
+                [
+                    f"- {item['skill_name']} (score={item['score']:.2f}) | reasons: {'; '.join(item.get('reasons', []))}"
+                    for item in candidate_skills
+                ]
+            )
+            chat_msgs.append(
+                {
+                    "role": "assistant",
+                    "content": f"[Round 0] 🧭 SkillRouter\nCandidate skills:\n{router_text}",
+                }
+            )
+    else:
+        chat_msgs.append(
+            {
+                "role": "assistant",
+                "content": "[Round 0] 🧭 SkillRouter\nNo suitable skill matched. Fall back to raw tools if needed.",
+            }
+        )
 
     def emit(download_path=None):
-        return render_chat_html(chat_msgs), current_preview(), download_path, download_path
+        return render_chat_html(chat_msgs), download_path
+
+    try:
+        model = get_model()
+    except Exception as exc:
+        chat_msgs.append(
+            {"role": "assistant", "content": f"[Round 0] ❌ Observation\n{exc}"}
+        )
+        yield emit(None)
+        return
 
     for round_id in range(1, MAX_TOOL_ROUNDS + 1):
-        model_output = Model.generate(conversation)
+        try:
+            model_output = model.generate(conversation, extra_system_prompt=selected_skill_prompt)
+        except Exception as exc:
+            chat_msgs.append(
+                {
+                    "role": "assistant",
+                    "content": f"[Round {round_id}] ❌ Observation\n模型推理失败：{exc}",
+                }
+            )
+            yield emit(None)
+            return
+
         thought, actions = extract_thought_and_actions(model_output)
 
         if not actions:
-            chat_msgs.append({"role": "assistant", "content": f"[Round {round_id}] Thinking...\n{thought or model_output}"})
+            chat_msgs.append(
+                {"role": "assistant", "content": f"[Round {round_id}] Thinking...\n{thought or model_output}"}
+            )
             yield emit(None)
             conversation.append({"role": "assistant", "content": model_output})
             conversation.append({"role": "user", "content": user_question})
             continue
 
-        action = actions[0]
-        api_name = action["name"]
-        api_args = dict(action["arguments"])
+        action = actions[0] if isinstance(actions[0], dict) else {}
+        api_name = action.get("name")
+        raw_args = action.get("arguments", {})
+        api_args = raw_args if isinstance(raw_args, dict) else {}
+
+        if not api_name:
+            chat_msgs.append(
+                {
+                    "role": "assistant",
+                    "content": f"[Round {round_id}] ❌ Observation\n无效动作格式：缺少工具名。",
+                }
+            )
+            yield emit(None)
+            conversation.append({"role": "assistant", "content": model_output})
+            conversation.append(
+                {
+                    "role": "user",
+                    "content": "The action format is invalid. Please output a valid JSON action list.",
+                }
+            )
+            continue
 
         if api_name == "Terminate":
-            final_answer = api_args.get("ans", "") or "已完成，结果请查看右侧图像或左侧下载文件。"
+            final_answer = api_args.get("ans", "") or "已完成，结果请查看输出历史或下载文件。"
             chat_msgs.append({"role": "assistant", "content": f"[Round {round_id}] ✅ Final\n{final_answer}"})
             download = registry.get("latest_output") or registry.get("tvdi_result")
             yield emit(download)
             return
 
         injected_args = inject_runtime_arguments(api_name, api_args, registry, current_gpkg)
-        chat_msgs.append({"role": "assistant", "content": f"[Round {round_id}] 🛠️ Action: {api_name}\nArgs:\n{json.dumps(injected_args, ensure_ascii=False, indent=2)}"})
+        chat_msgs.append(
+            {
+                "role": "assistant",
+                "content": f"[Round {round_id}] 🛠️ Action: {api_name}\nArgs:\n{json.dumps(injected_args, ensure_ascii=False, indent=2)}",
+            }
+        )
         yield emit(None)
 
-        tool_resp = tool_manager.call_tool(api_name, injected_args)
+        try:
+            raw_tool_resp = tool_manager.call_tool(api_name, injected_args)
+        except Exception as exc:
+            raw_tool_resp = {"error_code": -1, "text": f"Tool call failed: {exc}"}
+
+        tool_resp = normalize_tool_response(raw_tool_resp, api_name)
         if "gpkg" in tool_resp:
             current_gpkg = tool_resp.get("gpkg")
 
@@ -524,14 +592,213 @@ def run_agent(user_question, *flat_args):
         yield emit(download)
 
         conversation.append({"role": "assistant", "content": model_output})
-        conversation.append({"role": "user", "content": f"OBSERVATION:\n{api_name} outputs: {obs_text}\nPlease summarize and answer the question."})
+        conversation.append(
+            {
+                "role": "user",
+                "content": f"OBSERVATION:\n{api_name} outputs: {obs_text}\nPlease summarize and answer the question.",
+            }
+        )
 
     chat_msgs.append({"role": "assistant", "content": "达到最大轮数，已停止。"})
     yield emit(registry.get("latest_output") or registry.get("tvdi_result"))
 
+def render_upload_registry_html(registry):
+    registry = registry or {}
+    blocks = ['<div class="asset-list">']
+    populated = False
+
+    for spec in INPUT_SPECS:
+        item = registry.get(spec["key"])
+        if not item:
+            continue
+        populated = True
+        preview = html.escape(item.get("preview") or "")
+        label = html.escape(item.get("label") or spec["label"])
+        path = html.escape(item.get("path") or "")
+    
+    blocks.append("</div>")
+    return "".join(blocks)
+
+
+def render_output_history_html(history):
+    history = history or []
+    if not history:
+        return """
+        <div class="history-list empty-state">
+            <strong>暂无输出历史</strong>
+            <p>Agent 生成结果后，会按时间倒序显示在这里。</p>
+        </div>
+        """
+
+    blocks = ['<div class="history-list">']
+    for idx, item in enumerate(history, start=1):
+        preview = html.escape(item.get("preview") or "")
+        name = html.escape(item.get("name") or f"output_{idx}")
+        created_at = html.escape(item.get("created_at") or "--")
+        source = html.escape(item.get("source") or "Agent")
+        status = html.escape(item.get("status") or "ready")
+        path = html.escape(item.get("path") or "")
+        blocks.append(
+            f"""
+            <div class="history-item">
+                <div class="history-thumb-wrap">
+                    <img class="history-thumb" src="/gradio_api/file={preview}" alt="{name}" />
+                </div>
+                <div class="history-meta">
+                    <div class="history-title-row">
+                        <strong>{name}</strong>
+                        <span class="history-status status-{status}">{status}</span>
+                    </div>
+                    <div class="history-sub">{source} · {created_at}</div>
+                    <div class="history-path">{path}</div>
+                </div>
+            </div>
+            """
+        )
+    blocks.append("</div>")
+    return "".join(blocks)
+
+
+def append_output_history(history, path, source="Agent"):
+    if not path:
+        return history or []
+
+    resolved = resolve_existing_file(path)
+    if not resolved:
+        return history or []
+
+    history = list(history or [])
+    if any(item.get("path") == resolved for item in history):
+        return history
+
+    preview = make_preview_if_tif(resolved)
+    history.insert(
+        0,
+        {
+            "name": os.path.basename(resolved),
+            "path": resolved,
+            "preview": preview if resolve_existing_file(preview) else resolved,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "source": source,
+            "status": "success",
+        },
+    )
+    return history
+
+
+def build_batch_files(history):
+    files = []
+    for item in history or []:
+        path = resolve_existing_file(item.get("path"))
+        if path:
+            files.append(path)
+    return files
+
+
+def clear_output_history():
+    return render_output_history_html([]), [], []
+
+
+def make_upload_change_handler(spec_key):
+    spec = get_input_spec(spec_key)
+
+    def _handler(image_path, upload_registry):
+        preview_path, original_tif = handle_upload(image_path)
+        bound_path = normalize_uploaded_input(
+            preview_path, original_tif, sample_aliases=spec.get("sample_aliases")
+        )
+        upload_registry = dict(upload_registry or {})
+        if bound_path:
+            upload_registry[spec_key] = {
+                "label": spec["label"],
+                "path": bound_path,
+                "preview": preview_path or bound_path,
+                "group": spec["group"],
+                "status": "ready",
+            }
+        else:
+            upload_registry.pop(spec_key, None)
+
+        return (
+            preview_path,
+            original_tif,
+            upload_registry,
+            render_upload_registry_html(upload_registry),
+        )
+
+    return _handler
+
+
+def run_agent_with_ui(user_question, *payload):
+    flat_args = payload[:-1]
+    output_history = payload[-1] or []
+
+    for chat_rendered, batch_candidate in run_agent(user_question, *flat_args):
+        output_history = append_output_history(output_history, batch_candidate, source="Agent")
+
+        yield (
+            chat_rendered,
+            build_batch_files(output_history),
+            render_output_history_html(output_history),
+            output_history,
+        )
+
+
+def reset_ui_v2():
+    outputs = [
+        "",                              # user_input
+        render_chat_html([]),            # chat_html
+        [],                              # batch_download_files
+        render_upload_registry_html({}), # upload_summary_html
+        render_output_history_html([]),  # output_history_html
+        {},                              # upload_registry_state
+        [],                              # output_history_state
+    ]
+    for _ in INPUT_SPECS:
+        outputs.extend([None, None])     # image component + original tif state
+    return tuple(outputs)
+
+
+def supports_blocks_css():
+    try:
+        return "css" in inspect.signature(gr.Blocks.__init__).parameters
+    except Exception:
+        return True
+
+
+def supports_launch_css():
+    try:
+        return "css" in inspect.signature(gr.Blocks.launch).parameters
+    except Exception:
+        return False
+
 
 css = """
+/* ===== layout backbone: single source of truth ===== */
 :root {
+    --topbar-h: 72px;
+    --page-pad-top: 16px;
+    --page-pad-right: 16px;
+    --page-pad-bottom: 16px;
+    --page-pad-left: 6px;
+
+    --rail-gap: 10px;
+
+    --left-cluster-w: 720px;
+    --right-rail-w: 360px;
+    --center-min-w: 760px;
+
+    --left-col-gap: 10px;
+    --example-col-fr: 0.9fr;
+    --upload-col-fr: 1.1fr;
+
+    --panel-radius: 18px;
+    --panel-pad: 16px;
+    --composer-h: 148px;
+
+    /* 统一由这一处控制桌面三栏高度 */
+    --workspace-h: 900px;
+
     --c-deep: #355872;
     --c-mid: #7AAACE;
     --c-light: #9CD5FF;
@@ -539,21 +806,38 @@ css = """
     --c-border: #d6deea;
     --c-text: #132a3f;
     --c-muted: #58738a;
-    --card: #ffffff;
+    --c-card: #ffffff;
+    --c-soft: #f8fbff;
+    --c-user: #edf6ff;
+    --c-action: #eef7ff;
+    --c-obs: #eefaf7;
+    --c-final: #f0f6fb;
     --shadow: 0 10px 28px rgba(53, 88, 114, 0.10);
 }
 
 html, body, .gradio-container {
+    height: 100%;
     background: var(--c-bg) !important;
     color: var(--c-text) !important;
     font-family: "Inter", "IBM Plex Sans", "Segoe UI", sans-serif !important;
 }
 
-.gradio-container {
-    max-width: 100vw !important;
-    padding: 92px 16px 16px !important;
+/* 允许整页滚动，彻底解除外层裁切 */
+body {
+    overflow: auto !important;
 }
 
+.gradio-container {
+    max-width: 100vw !important;
+    padding:
+        calc(var(--topbar-h) + 20px)
+        var(--page-pad-right)
+        var(--page-pad-bottom)
+        var(--page-pad-left) !important;
+    overflow: visible !important;
+}
+
+/* 顶栏 */
 .topbar-card {
     position: fixed;
     top: 12px;
@@ -561,11 +845,10 @@ html, body, .gradio-container {
     right: 16px;
     z-index: 60;
     background: linear-gradient(120deg, var(--c-deep), #426a8c 50%, var(--c-mid));
-    border: 1px solid rgba(255, 255, 255, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.24);
     color: #fff;
     border-radius: 16px;
     box-shadow: var(--shadow);
-    margin-bottom: 12px;
 }
 
 .topbar-inner {
@@ -590,203 +873,745 @@ html, body, .gradio-container {
 .topbar-title h1 { margin: 0; font-size: 20px; color: #fff; }
 .topbar-title p { margin: 2px 0 0; font-size: 12px; color: rgba(255,255,255,.88); }
 
-.workspace-grid {
-    gap: 12px;
-    align-items: stretch;
-    height: calc(100vh - 108px);
+/* ===== workspace ===== */
+.workspace-shell {
+    min-height: var(--workspace-h);
+    height: auto !important;
+    max-height: none !important;
+    gap: var(--rail-gap);
+    flex-wrap: nowrap !important;
+    align-items: stretch !important;
 }
 
-.left-rail,
-.right-rail {
-    height: 100%;
-    overflow: hidden;
+/* 三栏统一固定高度，只在这一处控制 */
+#left-cluster,
+#center-rail,
+#right-rail {
+    height: var(--workspace-h) !important;
+    min-height: var(--workspace-h) !important;
+    max-height: var(--workspace-h) !important;
 }
 
-.center-rail {
-    height: 100%;
-    min-width: 760px;
+#left-cluster {
+    order: 1;
+    flex: 0 0 var(--left-cluster-w) !important;
+    max-width: var(--left-cluster-w) !important;
+    min-width: var(--left-cluster-w) !important;
 }
 
-.fixed-column {
-    height: 100%;
+#center-rail {
+    order: 2;
+    flex: 1 1 auto !important;
+    min-width: var(--center-min-w) !important;
+}
+
+#right-rail {
+    order: 3;
+    flex: 0 0 var(--right-rail-w) !important;
+    max-width: var(--right-rail-w) !important;
+    min-width: var(--right-rail-w) !important;
+}
+
+/* 这些层只负责继承父高度，不再抢高度控制权 */
+.rail-stack,
+.panel-fill,
+.left-top-card,
+.right-bottom-card,
+#center-main-card,
+.left-cluster-shell,
+.left-sub-card {
+    min-height: 0 !important;
+    height: 100% !important;
+    max-height: 100% !important;
+}
+
+.rail-stack {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: var(--rail-gap);
 }
-
-.scroll-y { overflow-y: auto; }
 
 .panel-card {
-    background: var(--card) !important;
+    background: var(--c-card) !important;
     border: 1px solid var(--c-border) !important;
-    border-radius: 16px !important;
+    border-radius: var(--panel-radius) !important;
     box-shadow: var(--shadow) !important;
-    padding: 12px !important;
+    padding: var(--panel-pad) !important;
     overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 0 !important;
 }
 
-.section-head h3 { margin: 0; color: var(--c-text); }
+.panel-fill,
+#center-main-card,
+.left-sub-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.section-head { margin-bottom: 12px; }
+.section-head h3 { margin: 0; color: var(--c-text); font-size: 18px; }
 .section-head p { margin: 6px 0 0; color: var(--c-muted); font-size: 13px; line-height: 1.45; }
-.section-head .panel-kicker { font-size: 11px; color: var(--c-deep); font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 
-.mode-tabs button[aria-selected="true"] { background: var(--c-deep) !important; color: #fff !important; }
-.mode-note { background: #f8fbff; border: 1px solid #e4edf8; border-radius: 12px; padding: 10px; margin-bottom: 10px; }
-.mode-note p { margin: 6px 0 0; color: var(--c-muted); font-size: 12px; }
-
-.upload-slot,
-.result-view,
-.download-slot {
-    border-radius: 12px !important;
-    border: 1px solid #dde7f3 !important;
-    background: #fbfdff !important;
+/* 左侧上下两块，等高分布 */
+.left-cluster-shell {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--left-col-gap);
+    align-items: stretch;
+    height: 100% !important;
+    min-height: 0 !important;
 }
 
-.chat-shell {
-    height: calc(100% - 132px);
-    overflow: auto;
+.left-cluster-shell > .left-sub-card {
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+}
+
+/* 统一滚动职责：只让真正内容区滚动 */
+.scroll-y {
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: auto;
+}
+
+.left-sub-scroll,
+.chat-scroll,
+.history-scroll {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+}
+
+/* 左侧上传摘要仍然固定块高 */
+.upload-summary-scroll {
+    flex: 0 0 auto !important;
+    min-height: 0 !important;
+    max-height: 140px;
+    overflow-y: auto !important;
+}
+
+.upload-panel-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0 !important;
+    height: 100% !important;
+}
+
+.upload-tabs {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+}
+
+.upload-slot {
+    min-height: 0 !important;
+    height: 100% !important;
+}
+
+/* 中间聊天区 */
+.chat-scroll {
     border: 1px solid var(--c-border);
     border-radius: 14px;
     background: #fff;
 }
 
-.chat-area { display: flex; flex-direction: column; gap: 10px; padding: 14px; }
+.chat-area {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+}
 
-.user-msg, .assistant-msg { max-width: 88%; border-radius: 14px; padding: 12px; border: 1px solid #dbe5f1; }
-.user-msg { margin-left: auto; background: #edf6ff; border-color: #cbe3fb; }
+#center-main-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 0 !important;
+}
+
+/* Mission Console / chat 区 */
+#mission-console {
+    flex: 4 1 0 !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+
+    border: 1px solid var(--c-border);
+    border-radius: 14px;
+    background: #fff;
+}
+
+/* 输入区固定高度，由 composer 独占 */
+#composer-card {
+    flex: 1 1 0 !important;
+    min-height: 0 !important;
+    margin-top: 12px;
+
+    border: 1px solid var(--c-border);
+    border-radius: 16px;
+    background: #fff;
+    padding: 12px;
+    align-items: stretch;
+    gap: 10px;
+}
+
+#composer-card .input-box textarea {
+    height: 100% !important;
+    min-height: 100% !important;
+    max-height: 100% !important;
+    border-radius: 12px !important;
+    border: 1px solid #cbd8e8 !important;
+}
+
+.composer-grid {
+    height: 100%;
+    align-items: stretch;
+    gap: 10px;
+}
+
+.input-box textarea {
+    min-height: calc(var(--composer-h) - 42px) !important;
+    max-height: calc(var(--composer-h) - 42px) !important;
+    border-radius: 12px !important;
+    border: 1px solid #cbd8e8 !important;
+}
+
+/* 右侧：用 order 直接把下载区放到历史区上面，无需改 Python */
+.right-bottom-card {
+    display: flex;
+    flex-direction: column;
+}
+
+.right-bottom-card > .toolbar-row {
+    order: 1;
+    flex: 0 0 auto;
+}
+
+.right-bottom-card > .history-scroll {
+    order: 2;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+}
+
+.right-bottom-card > .download-slot {
+    order: 3;
+    flex: 0 0 220px !important;
+    min-height: 220px;
+    max-height: 220px;
+    overflow-y: auto;
+    margin-top: 12px;
+    margin-bottom: 0;
+}
+
+/* 视觉样式 */
+.mode-tabs button[aria-selected="true"] {
+    background: var(--c-deep) !important;
+    color: #fff !important;
+}
+
+.mode-note {
+    background: var(--c-soft);
+    border: 1px solid #e4edf8;
+    border-radius: 12px;
+    padding: 10px;
+    margin-bottom: 10px;
+}
+
+.mode-note p {
+    margin: 6px 0 0;
+    color: var(--c-muted);
+    font-size: 12px;
+}
+
+.upload-slot,
+.download-slot {
+    border-radius: 14px !important;
+    border: 1px solid #dde7f3 !important;
+    background: #fbfdff !important;
+}
+
+.upload-slot {
+    min-height: 200px;
+}
+
+.asset-list,
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.asset-item,
+.history-item {
+    display: grid;
+    grid-template-columns: 76px 1fr;
+    gap: 10px;
+    align-items: center;
+    border: 1px solid #e1e9f3;
+    background: #fbfdff;
+    border-radius: 14px;
+    padding: 10px;
+}
+
+.asset-thumb-wrap,
+.history-thumb-wrap {
+    width: 76px;
+    height: 76px;
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid #dbe6f2;
+    background: #fff;
+}
+
+.asset-thumb,
+.history-thumb {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.asset-meta,
+.history-meta {
+    min-width: 0;
+}
+
+.asset-title,
+.history-title-row strong {
+    display: block;
+    color: var(--c-text);
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.asset-sub,
+.history-sub {
+    margin-top: 4px;
+    color: var(--c-muted);
+    font-size: 12px;
+}
+
+.asset-path,
+.history-path {
+    margin-top: 4px;
+    color: #6f879b;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.history-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.history-status {
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.status-success {
+    background: #e7f7ef;
+    color: #1d7a49;
+}
+
+.user-msg, .assistant-msg {
+    max-width: 88%;
+    border-radius: 14px;
+    padding: 12px;
+    border: 1px solid #dbe5f1;
+}
+
+.user-msg {
+    margin-left: auto;
+    background: var(--c-user);
+    border-color: #cbe3fb;
+}
+
 .assistant-msg { background: #f9fbff; }
-.action-msg { background: #eef7ff; border-color: #cfe5fb; }
-.observation-msg { background: #eefaf7; border-color: #cde9df; }
-.final-msg { background: #f0f6fb; border-color: #d4e1ef; }
+.action-msg { background: var(--c-action); border-color: #cfe5fb; }
+.observation-msg { background: var(--c-obs); border-color: #cde9df; }
+.final-msg { background: var(--c-final); border-color: #d4e1ef; }
+.alert-msg { background: #fff6f1; border-color: #f3d6c6; }
 
-.msg-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
-.round-pill, .msg-badge { border-radius: 999px; padding: 3px 10px; font-size: 10px; font-weight: 700; background: #e9f1fa; color: var(--c-deep); }
-.msg-heading { font-size: 13px; font-weight: 700; }
-.assistant-msg pre, .user-msg pre { margin: 0; white-space: pre-wrap; font-size: 12px; line-height: 1.55; }
+.msg-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+}
 
-.composer-row { height: 120px; margin-top: 10px; }
-.question-box textarea { height: 104px !important; border-radius: 12px !important; border: 1px solid #cbd8e8 !important; }
-.submit-btn button, .clear-btn button { border-radius: 12px !important; min-height: 44px !important; font-weight: 700 !important; }
-.submit-btn button { background: var(--c-deep) !important; color: #fff !important; }
-.clear-btn button { background: #fff !important; border: 1px solid #c8d7e7 !important; color: var(--c-text) !important; }
+.round-pill,
+.msg-badge {
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 10px;
+    font-weight: 700;
+    background: #e9f1fa;
+    color: var(--c-deep);
+}
 
-.example-panel { flex: 0 0 42%; }
-.preview-panel { flex: 1; }
-.input-panel { flex: 1; }
-.bulk-download-panel { flex: 0 0 36%; }
+.msg-heading {
+    font-size: 13px;
+    font-weight: 700;
+}
 
-@media (max-width: 1400px) {
-    .workspace-grid { height: auto; }
-    .left-rail, .center-rail, .right-rail { height: auto; }
+.assistant-msg pre,
+.user-msg pre {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: 12px;
+    line-height: 1.58;
+}
+
+.send-btn button,
+.clear-btn button,
+.ghost-btn button {
+    border-radius: 12px !important;
+    min-height: 46px !important;
+    font-weight: 800 !important;
+}
+
+.send-btn button {
+    background: var(--c-deep) !important;
+    color: #fff !important;
+}
+
+.clear-btn button,
+.ghost-btn button {
+    background: #fff !important;
+    border: 1px solid #c8d7e7 !important;
+    color: var(--c-text) !important;
+}
+
+.toolbar-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+/* 中等屏幕稍微收窄左右栏 */
+@media (max-width: 1600px) {
+    :root {
+        --left-cluster-w: 680px;
+        --right-rail-w: 340px;
+    }
+}
+
+/* 小屏切换为自然流式布局，不再强行固定三栏高度 */
+@media (max-width: 1360px) {
+    :root {
+        --workspace-h: auto;
+    }
+
+    .workspace-shell {
+        min-height: 0;
+        height: auto !important;
+        max-height: none !important;
+        flex-wrap: wrap !important;
+    }
+
+    #left-cluster,
+    #center-rail,
+    #right-rail {
+        min-width: 100% !important;
+        max-width: 100% !important;
+        flex: 1 1 100% !important;
+        height: auto !important;
+        min-height: 0 !important;
+        max-height: none !important;
+    }
+
+    .left-cluster-shell {
+        grid-template-columns: 1fr;
+        height: auto !important;
+        max-height: none !important;
+    }
+
+    .rail-stack,
+    .panel-fill,
+    .left-top-card,
+    .right-bottom-card,
+    #center-main-card,
+    .left-sub-card {
+        height: auto !important;
+        max-height: none !important;
+    }
+
+    .left-sub-scroll,
+    .chat-scroll,
+    .history-scroll {
+        flex: 0 0 auto !important;
+        max-height: 520px !important;
+    }
 }
 """
 
+blocks_kwargs = {"title": "Remote Sensing Data Intelligent Interpretation System"}
+BLOCKS_HAS_CSS = supports_blocks_css()
+LAUNCH_HAS_CSS = supports_launch_css()
+if BLOCKS_HAS_CSS:
+    blocks_kwargs["css"] = css
 
-def reset_ui():
-    outputs = ["", render_chat_html([]), None, None, None]
-    for _ in INPUT_SPECS:
-        outputs.extend([None, None])
-    return tuple(outputs)
+LOGO_PATH = os.path.join("/home/ubuntu/01_Code/OpenEarthAgent/assets/nwpu-logo.png")
 
-
-with gr.Blocks(title="WeavLight Workspace", css=css) as demo:
+with gr.Blocks(**blocks_kwargs) as demo:
     state_components, image_components = {}, {}
+    upload_registry_state = gr.State({})
+    output_history_state = gr.State([])
 
     gr.HTML(
-        """
+        f"""
         <div class="topbar-card">
             <div class="topbar-inner">
-                <div class="topbar-logo"><img src="./assets/nwpu-logo.svg" alt="logo"/></div>
+                <div class="topbar-logo">
+                    <img src="/gradio_api/file={LOGO_PATH}" alt="logo"/>
+                </div>
                 <div class="topbar-title">
-                    <h1>WeavLight · AI Agent Imagery Workspace</h1>
-                    <p>Multi-modal remote-sensing analysis cockpit · desktop optimized</p>
+                    <h1>Remote Sensing Data Intelligent Interpretation System</h1>
+                    <p>NWPU Intelligent Vision and Information Processing Laboratory, Manager: Li Huihui. Github Home: https://github.com/NWPU-LHH/ </p>
                 </div>
             </div>
         </div>
         """
     )
 
-    with gr.Row(elem_classes=["workspace-grid"]):
-        with gr.Column(scale=3, min_width=330, elem_classes=["left-rail", "fixed-column"]):
-            with gr.Column(elem_classes=["panel-card", "input-panel", "scroll-y"]):
-                gr.HTML("<div class='section-head'><div class='panel-kicker'>Left</div><h3>Image upload inputs</h3><p>Upload task imagery here. This area is fixed-width for desktop workflow stability.</p></div>")
-                with gr.Tabs(elem_classes=["mode-tabs"]):
-                    for group in INPUT_GROUPS:
-                        with gr.Tab(group["tab"]):
-                            gr.HTML(f"<div class='mode-note'><strong>{group['title']}</strong><p>{group['note']}</p></div>")
-                            if len(group["input_keys"]) == 1:
-                                spec = get_input_spec(group["input_keys"][0])
-                                image_components[spec["key"]] = gr.Image(type="filepath", label=spec["label"], height=spec["height"], sources=["upload", "clipboard"], elem_classes=["upload-slot"])
-                                state_components[spec["key"]] = gr.State()
-                            else:
-                                with gr.Row():
-                                    for key in group["input_keys"]:
-                                        spec = get_input_spec(key)
-                                        image_components[spec["key"]] = gr.Image(type="filepath", label=spec["label"], height=spec["height"], sources=["upload", "clipboard"], elem_classes=["upload-slot"])
-                                        state_components[spec["key"]] = gr.State()
-
-            with gr.Column(elem_classes=["panel-card", "bulk-download-panel"]):
-                gr.HTML("<div class='section-head'><div class='panel-kicker'>Left</div><h3>Batch output download</h3><p>Download current generated assets in one place to close the operation loop.</p></div>")
-                download_file = gr.File(label="Batch Download / Latest Output", elem_classes=["download-slot"])
-
-            for spec in INPUT_SPECS:
-                image_components[spec["key"]].change(
-                    fn=handle_upload,
-                    inputs=image_components[spec["key"]],
-                    outputs=[image_components[spec["key"]], state_components[spec["key"]]],
-                    trigger_mode="once",
+    with gr.Row(elem_classes=["workspace-shell"]):
+        # Center first in code
+        with gr.Column(elem_id="center-rail", elem_classes=["rail-stack"]):
+            with gr.Column(elem_id="center-main-card", elem_classes=["panel-card"]):
+                gr.HTML(
+                    "<div class='section-head'>"
+                    "<h3>Agent 问答与流程日志</h3>"
+                    "</div>"
                 )
 
-        with gr.Column(scale=6, min_width=760, elem_classes=["center-rail", "fixed-column"]):
-            with gr.Column(elem_classes=["panel-card"], scale=1):
-                gr.HTML("<div class='section-head'><div class='panel-kicker'>Center</div><h3>Agent Q&A process log</h3><p>The chat stream shows each tool action, observation, and final answer step-by-step.</p></div>")
-                chat_html = gr.HTML(value=render_chat_html([]), elem_classes=["chat-shell"])
-                with gr.Row(elem_classes=["composer-row"]):
-                    user_input = gr.Textbox(label="", placeholder="Type your task for the AI Agent...", lines=4, elem_classes=["question-box"], scale=8)
-                    with gr.Column(scale=2, min_width=160):
-                        submit_btn = gr.Button("Send", elem_classes=["submit-btn"])
-                        clear_btn = gr.Button("Clear", elem_classes=["clear-btn"])
+                chat_html = gr.HTML(
+                    value=render_chat_html([]),
+                    elem_id="mission-console",
+                    elem_classes=["chat-scroll"],
+                )
 
-        with gr.Column(scale=3, min_width=330, elem_classes=["right-rail", "fixed-column"]):
-            with gr.Column(elem_classes=["panel-card", "example-panel", "scroll-y"]):
-                gr.HTML("<div class='section-head'><div class='panel-kicker'>Right</div><h3>Example templates</h3><p>Open or collapse examples to quickly bootstrap prompts and inputs.</p></div>")
-                with gr.Accordion("Open / Hide Examples", open=False, elem_classes=["example-accordion"]):
-                    example_inputs = [user_input] + [image_components[spec["key"]] for spec in INPUT_SPECS]
-                    with gr.Tabs():
-                        with gr.Tab("General / Index"):
-                            gr.Examples(examples=[
-                                make_example("Generate a preview from the NBR difference for Topanga State Park, Los Angeles, USA, covering December 2024 and February 2025."),
-                                make_example("Visualize all museums and malls over the given GeoTIFF image, compute the distance between the closest pair, and finally annotate the image with this distance.", primary_image="./assets/S_10_preview.png"),
-                                make_example("Locate and estimate the distance between aircrafts in the scene. Assuming GSD 0.6 px/meter", primary_image="./assets/TG_P0009.png"),
-                            ], inputs=example_inputs, preprocess=False)
-                        with gr.Tab("Terrain / DEM"):
-                            gr.Examples(examples=[
-                                make_example("For Manchester State Forest, South Carolina, United States, create a DEM layer from GEE, generate 20 m contours and 100 m elevation bands, and summarize the elevation range."),
-                                make_example("For the area within a 1000 m radius of Edinburgh Castle, generate a DEM layer, create contour lines, and visualize the resulting terrain bands on the map."),
-                            ], inputs=example_inputs, preprocess=False)
-                        with gr.Tab("TVDI"):
-                            gr.Examples(examples=[
-                                make_example("Compute the Temperature Vegetation Dryness Index (TVDI) from NDVI and LST rasters.", lst_image="./assets/Sichuan_2021-07-12_LST.tif", ndvi_image="./assets/Sichuan_2021-07-12_NDVI.tif"),
-                            ], inputs=example_inputs, preprocess=False)
-                        with gr.Tab("Time Series"):
-                            gr.Examples(examples=[make_example("Compare the two temporal images and identify the major changes.")], inputs=example_inputs, preprocess=False)
+                with gr.Row(elem_id="composer-card", elem_classes=["composer-grid"]):
+                    user_input = gr.Textbox(
+                        label="",
+                        placeholder="请输入任务指令，相关例子可以直接点击Example...",
+                        lines=4,
+                        max_lines=8,
+                        elem_classes=["input-box"],
+                        scale=9,
+                    )
+                    with gr.Column(scale=2, min_width=150):
+                        submit_btn = gr.Button("发送", elem_classes=["send-btn"])
+                        clear_btn = gr.Button("清空", elem_classes=["clear-btn"])
 
-            with gr.Column(elem_classes=["panel-card", "preview-panel"]):
-                gr.HTML("<div class='section-head'><div class='panel-kicker'>Right</div><h3>HD preview + single download</h3><p>Inspect the latest visual result with high clarity before downloading.</p></div>")
-                output_image = gr.Image(type="filepath", label="Output Preview", height=340, elem_classes=["result-view"])
-                single_download_file = gr.File(label="Single Output Download", elem_classes=["download-slot"])
+        # Left cluster
+        with gr.Column(elem_id="left-cluster", elem_classes=["rail-stack"]):
+            with gr.Column(elem_classes=["panel-card", "left-top-card", "panel-fill"]):
+                with gr.Column(elem_classes=["left-cluster-shell"]):
+                    # Upload first in code
+                    with gr.Column(elem_classes=["panel-card", "left-sub-card"]):
+                        gr.HTML(
+                            "<div class='section-head'>"
+                            "<h3>输入图片上传</h3>"
+                            "</div>"
+                        )
 
+                        with gr.Column(elem_classes=["left-sub-scroll", "upload-panel-body"]):
+                            with gr.Tabs(elem_classes=["mode-tabs", "upload-tabs"]):
+                                for group in INPUT_GROUPS:
+                                    with gr.Tab(group["tab"]):
+                                        if len(group["input_keys"]) == 1:
+                                            spec = get_input_spec(group["input_keys"][0])
+                                            image_components[spec["key"]] = gr.Image(
+                                                type="filepath",
+                                                label=spec["label"],
+                                                sources=["upload", "clipboard"],
+                                                elem_classes=["upload-slot"],
+                                            )
+                                            state_components[spec["key"]] = gr.State()
+                                        else:
+                                            with gr.Row():
+                                                for key in group["input_keys"]:
+                                                    spec = get_input_spec(key)
+                                                    image_components[spec["key"]] = gr.Image(
+                                                        type="filepath",
+                                                        label=spec["label"],
+                                                        sources=["upload", "clipboard"],
+                                                        elem_classes=["upload-slot"],
+                                                    )
+                                                    state_components[spec["key"]] = gr.State()
+
+                        upload_summary_html = gr.HTML(
+                            value=render_upload_registry_html({}),
+                            elem_classes=["scroll-y", "upload-summary-scroll"],
+                        )
+
+                    # Example second in code
+                    with gr.Column(elem_classes=["panel-card", "left-sub-card"]):
+                        gr.HTML(
+                            "<div class='section-head'>"
+                            "<h3>Example 示例模板</h3>"
+                            "</div>"
+                        )
+
+                        example_inputs = [user_input] + [image_components[spec["key"]] for spec in INPUT_SPECS]
+                        with gr.Column(elem_classes=["left-sub-scroll"]):
+                            with gr.Tabs():
+                                with gr.Tab("GeoIndex"):
+                                    gr.Examples(
+                                        examples=[
+                                            make_example(
+                                                "Generate a preview from the NBR difference for Topanga State Park, Los Angeles, USA, covering December 2024 and February 2025.",
+                                                ),
+                                            make_example(
+                                                "Visualize all museums and malls over the given GeoTIFF image, compute the distance between the closest pair, and finally annotate the image with this distance.", 
+                                                primary_image="./assets/S_10_preview.png"
+                                                ),
+                                            make_example(
+                                                "Locate and estimate the distance between aircrafts in the scene. Assuming GSD 0.6 px/meter", 
+                                                primary_image="./assets/TG_P0009.png"
+                                                ),
+                                        ],
+                                        inputs=example_inputs,
+                                        preprocess=False,
+                                    )
+                                with gr.Tab("Geo3DAnalyze"):
+                                    gr.Examples(
+                                        examples=[
+                                            make_example("For Manchester State Forest, South Carolina, United States, create a DEM layer from GEE, generate 20 m contours and 100 m elevation bands, and summarize the elevation range.",),
+                                            make_example("For the area within a 1000 m radius of Edinburgh Castle, generate a DEM layer, create contour lines, and visualize the resulting terrain bands on the map.",),
+                                        ],
+                                        inputs=example_inputs,
+                                        preprocess=False,
+                                    )
+                                with gr.Tab("SARAnalyze"):
+                                    gr.Examples(
+                                        examples=[
+                                            make_example(
+                                                "Please convert this SAR image to an RGB image",
+                                                primary_image="./assets/sar_test_1.png"
+                                            ),
+                                           make_example(
+                                                "First, the SAR image is optimized for noise reduction, and then SAR to GB conversion is performed. Next, object detection is performed, then marking is performed on the converted RGB image, and finally image description is performed",
+                                                primary_image="./assets/sar_test_1.png"
+                                            ),
+                                        ],
+                                        inputs=example_inputs,
+                                        preprocess=False,
+                                    )
+                                with gr.Tab("Time Retrieve"):
+                                    gr.Examples(
+                                        examples=[
+                                            make_example(
+                                                "Retrieving images from June 2023",
+                                            ),
+                                           make_example(
+                                                "Find remote sensing images from June 2023, output the number of images, and describe the last image",
+                                            ),
+                                        ],
+                                        inputs=example_inputs,
+                                        preprocess=False,
+                                    )
+
+        # Right rail
+        with gr.Column(elem_id="right-rail", elem_classes=["rail-stack"]):
+            with gr.Column(elem_classes=["panel-card", "right-bottom-card", "panel-fill"]):
+                gr.HTML(
+                    "<div class='section-head'>"
+                    "<h3>输出历史下载</h3>"
+                    "</div>"
+                )
+
+                batch_download_files = gr.File(
+                    label="批量下载",
+                    file_count="multiple",
+                    elem_classes=["download-slot"],
+                )
+
+                output_history_html = gr.HTML(
+                    value=render_output_history_html([]),
+                    elem_classes=["scroll-y", "history-scroll"],
+                )
+
+                with gr.Row(elem_classes=["toolbar-row"]):
+                    clear_history_btn = gr.Button("清空历史", elem_classes=["ghost-btn"])
+
+    for spec in INPUT_SPECS:
+        image_components[spec["key"]].change(
+            fn=make_upload_change_handler(spec["key"]),
+            inputs=[image_components[spec["key"]], upload_registry_state],
+            outputs=[
+                image_components[spec["key"]],
+                state_components[spec["key"]],
+                upload_registry_state,
+                upload_summary_html,
+            ],
+            trigger_mode="once",
+        )
 
     submit_inputs = [user_input]
     for spec in INPUT_SPECS:
         submit_inputs.extend([image_components[spec["key"]], state_components[spec["key"]]])
+    submit_inputs.append(output_history_state)
 
-    submit_btn.click(run_agent, inputs=submit_inputs, outputs=[chat_html, output_image, download_file, single_download_file])
+    submit_btn.click(
+        fn=run_agent_with_ui,
+        inputs=submit_inputs,
+        outputs=[
+            chat_html,
+            batch_download_files,
+            output_history_html,
+            output_history_state,
+        ],
+    )
 
-    clear_outputs = [user_input, chat_html, output_image, download_file, single_download_file]
+    clear_history_btn.click(
+        fn=clear_output_history,
+        inputs=[],
+        outputs=[
+            output_history_html,
+            batch_download_files,
+            output_history_state,
+        ],
+    )
+
+    clear_outputs = [
+        user_input,
+        chat_html,
+        batch_download_files,
+        upload_summary_html,
+        output_history_html,
+        upload_registry_state,
+        output_history_state,
+    ]
     for spec in INPUT_SPECS:
         clear_outputs.extend([image_components[spec["key"]], state_components[spec["key"]]])
-    clear_btn.click(reset_ui, inputs=[], outputs=clear_outputs)
+
+    clear_btn.click(
+        fn=reset_ui_v2,
+        inputs=[],
+        outputs=clear_outputs,
+    )
 
 
 if __name__ == "__main__":
-    demo.queue().launch(server_name="0.0.0.0", server_port=4444, allowed_paths=["./"])
+    launch_kwargs = {
+        "server_name": "0.0.0.0",
+        "server_port": 4444,
+        "allowed_paths": ["./"],
+    }
+    if LAUNCH_HAS_CSS and not BLOCKS_HAS_CSS:
+        launch_kwargs["css"] = css
+    demo.queue().launch(**launch_kwargs)

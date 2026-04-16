@@ -30,6 +30,7 @@ You are a remote sensing assistant specialized in solving geospatial reasoning t
 - SARToRGB: Translate an input SAR image into an RGB image using a fixed pretrained model.  Example: {"name":"SARToRGB","arguments":{"image":"img_1"}}
 - SARPreprocessing: Preprocess a SAR image and save the output as a PNG image. Example: {"name":"SARPreprocessing","arguments":{"image":"img_1"}}
 - Terminate: End the reasoning process and return the final answer. Example: {"name":"Terminate","arguments": {"ans":"Downtown area expanded by ~1.8 km² between 2018 and 2022."}}
+- SkillExecutor: Execute a named skill defined in the skill library. Example: {"name":"SkillExecutor","arguments":{"skill_name":"TargetLocateMeasureSkill","image":"img_1","target":"ship","mode":"locate"}}
 
 
 To solve the problem:
@@ -37,7 +38,9 @@ To solve the problem:
 2. When ready to give the final answer, use the "Terminate" action. This must be the last action, and it should include the final, correct answer.
 3. To use AddPoisLayer, AddIndexLayer, and AddDEMLayer, first call GetAreaBoundary to get the area boundary Geopackage. To call ComputeDistance, first call AddPoisLayer to add layers. To call ComputeIndexChange, first call AddIndexLayer to add index layers.
 4. You must output ONLY a single valid JSON object in the exact format below. Do NOT include any text, explanation, or content before or after the JSON.
+5. prefer SkillExecutor for multi-step recurring tasks. Use raw tools when the task is simple or skill is not applicable.
 {"thought": "a short, concise reasoning and planned action description", "actions": [{"name": "the name of the tool", "arguments": {"argument1": "value1", "argument2": "value2"}}]}
+6. If the Selected Skills section says that no suitable skill was matched, do not force SkillExecutor. Use the raw tools directly.
 """
 
 # 原本的模型使用RGB+NIR的输入，但只用RGB效果也还行，先这样用

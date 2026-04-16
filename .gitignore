@@ -62,3 +62,7 @@ tool_server/tool_workers/~/
 *.gpkg-shm
 *.gpkg-wal
 .codex
+
+# Additional notes
+.md
+app/BackUp/

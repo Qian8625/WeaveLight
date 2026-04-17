@@ -968,48 +968,97 @@ body {
 .gradio-container {
     max-width: 100vw !important;
     padding:
-        calc(var(--topbar-h) + 20px)
+        var(--page-pad-top)
         var(--page-pad-right)
         var(--page-pad-bottom)
         var(--page-pad-left) !important;
     overflow: visible !important;
 }
 
-/* 顶栏 */
-.topbar-card {
-    position: fixed;
-    top: 12px;
-    left: 16px;
-    right: 16px;
-    z-index: 60;
-    background: linear-gradient(120deg, var(--c-deep), #426a8c 50%, var(--c-mid));
-    border: 1px solid rgba(255, 255, 255, 0.24);
-    color: #fff;
-    border-radius: 16px;
-    box-shadow: var(--shadow);
-}
+/* title */
+.page-header {
+    width: 100%;
+    margin: 0 0 14px 0;
+    padding: 10px 0 6px 0;
 
-.topbar-inner {
     display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-}
-
-.topbar-logo {
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
-    background: rgba(255, 255, 255, 0.15);
-    border: 1px solid rgba(255, 255, 255, 0.35);
-    display: inline-flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
 }
 
-.topbar-logo img { width: 26px; height: 26px; object-fit: contain; }
-.topbar-title h1 { margin: 0; font-size: 20px; color: #fff; }
-.topbar-title p { margin: 2px 0 0; font-size: 12px; color: rgba(255,255,255,.88); }
+.page-header-main {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+
+    width: 100%;
+    text-align: left;
+    margin-bottom: 12px;
+}
+
+.page-header-logo {
+    width: 88px;
+    height: 88px;
+    flex: 0 0 88px;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.page-header-logo img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.page-header-title h1 {
+    margin: 0;
+    font-size: 28px;
+    line-height: 1.2;
+    color: var(--c-text);
+    font-weight: 800;
+}
+
+.page-header-title p {
+    margin: 6px 0 0 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--c-muted);
+}
+
+.page-header-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 0px;
+}
+
+.header-link-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: 8px 24px;
+    border-radius: 999px;
+    border: 1px solid #c8d7e7;
+    background: #ffffff;
+    color: var(--c-text);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 700;
+    transition: all 0.2s ease;
+}
+
+.header-link-btn:hover {
+    background: var(--c-deep);
+    color: #ffffff;
+    border-color: var(--c-deep);
+}
 
 /* ===== workspace ===== */
 .workspace-shell {
@@ -1494,15 +1543,22 @@ with gr.Blocks(**blocks_kwargs) as demo:
 
     gr.HTML(
         f"""
-        <div class="topbar-card">
-            <div class="topbar-inner">
-                <div class="topbar-logo">
+        <div class="page-header">
+            <div class="page-header-main">
+                <div class="page-header-logo">
                     <img src="/gradio_api/file={LOGO_PATH}" alt="logo"/>
                 </div>
-                <div class="topbar-title">
-                    <h1>Remote Sensing Data Intelligent Interpretation System</h1>
-                    <p>NWPU Intelligent Vision and Information Processing Laboratory, Manager: Li Huihui. Github Home: https://github.com/NWPU-LHH/ </p>
+                <div class="page-header-title">
+                    <h1>NPU Remote Sensing Data Intelligent Interpretation System</h1>
+                    <p>NPU Intelligent Vision and Information Processing Laboratory, Manager : Li Huihui</p>
                 </div>
+            </div>
+            
+            <div class="page-header-links">
+                <a class="header-link-btn" href="https://arxiv.org/abs/xxxx.xxxxx" target="_blank" rel="noopener noreferrer">arXiv</a>
+                <a class="header-link-btn" href="https://github.com/NWPU-LHH/" target="_blank" rel="noopener noreferrer">GitHub</a>
+                <a class="header-link-btn" href="https://your-project-page.example.com" target="_blank" rel="noopener noreferrer">Project Page</a>
+                <a class="header-link-btn" href="https://huggingface.co/" target="_blank" rel="noopener noreferrer">Hugging Face</a>
             </div>
         </div>
         """

@@ -346,3 +346,78 @@ tool_worker_config:
           model-path: /home/ubuntu/01_Code/OpenEarthAgent/models/cpk/cuhk-20260410T131636Z-3-001/cuhk/checkpoints/last.ckpt
           save_path: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/tools_output
 
+
+
+### Skill Register
+
+  - GeoTiffPoiDistanceSkill:
+      worker_name: GeoTiffPoiDistanceSkill
+      job_name: geotiff_poi_distance_skill
+      calculate_type: control
+      cmd:
+        script-addr: ./skills/skill_executors/GeoTiffPoiDistanceSkill_worker.py
+        port: 20120
+        host: "0.0.0.0"
+
+  - TargetLocateMeasureSkill:
+      worker_name: TargetLocateMeasureSkill
+      job_name: target_locate_measure_skill
+      calculate_type: control
+      cmd:
+        script-addr: ./skills/skill_executors/TargetLocateMeasureSkill_worker.py
+        port: 20121
+        host: "0.0.0.0"
+
+  - SARTargetLocateMeasureSkill:
+      worker_name: SARTargetLocateMeasureSkill
+      job_name: sar_target_locate_measure_skill
+      calculate_type: control
+      cmd:
+        script-addr: ./skills/skill_executors/SARTargetLocateMeasureSkill_worker.py
+        port: 20122
+        host: "0.0.0.0"
+
+  - MultConfirmSkill:
+      worker_name: MultConfirmSkill
+      job_name: mult_confirm_skill
+      calculate_type: control
+      cmd:
+        script-addr: ./skills/skill_executors/MultConfirmSkill_worker.py
+        port: 20123
+        host: "0.0.0.0"
+
+  - GeoTIFFPoiExploreSkill:
+      worker_name: GeoTIFFPoiExploreSkill
+      job_name: geotiff_poi_explore_skill
+      calculate_type: control
+      cmd:
+        script-addr: ./skills/skill_executors/GeoTIFFPoiExploreSkill_worker.py
+        port: 20124
+        host: "0.0.0.0"
+
+  - TargetAttributeSkill:
+      worker_name: TargetAttributeSkill
+      job_name: target_attribute_skill
+      calculate_type: control
+      cmd:
+        script-addr: ./skills/skill_executors/TargetAttributeSkill_worker.py
+        port: 20125
+        host: "0.0.0.0"
+
+  - ChangeSummarySkill:
+      worker_name: ChangeSummarySkill
+      job_name: change_summary_skill
+      calculate_type: control
+      cmd:
+        script-addr: ./skills/skill_executors/ChangeSummarySkill_executor.py
+        port: 20126
+        host: "0.0.0.0"
+
+  - ConditionalCountSkill:
+      worker_name: ConditionalCountSkill
+      job_name: conditional_count_skill
+      calculate_type: control
+      cmd:
+        script-addr: ./skills/skill_executors/ConditionalCountSkill_worker.py
+        port: 20128
+        host: "0.0.0.0"

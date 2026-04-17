@@ -2,8 +2,8 @@ import os
 import re
 from typing import Dict, List, Any, Tuple
 
-from tool_server.skills.registry import SKILL_REGISTRY
-from tool_server.skills.router_rules import ROUTER_RULES
+from tool_server.tool_workers.skills.registry import SKILL_REGISTRY
+from tool_server.tool_workers.skills.router_rules import ROUTER_RULES
 
 
 class SkillRouter:

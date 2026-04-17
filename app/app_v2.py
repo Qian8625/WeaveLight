@@ -323,33 +323,177 @@ def build_initial_user_message(user_question, registry):
                 "Use the most appropriate tool and bind these uploaded inputs to the correct tool arguments.",
             ]
         )
+
+    lines.extend(
+        [
+            "",
+            "Reference rules for tool arguments:",
+            "- Uploaded inputs can be referenced explicitly with $primary_image, $lst_image, $ndvi_image, $time1_image, $time2_image if available.",
+            "- Intermediate outputs from previous tool calls will be exposed as reusable artifact ids such as $latest_image or $round_2_sartorgb_image.",
+            "- If a later tool should use an intermediate result, reference it explicitly in the action arguments.",
+        ]
+    )
     return "\n".join(lines)
 
+def find_unresolved_references(api_args):
+    unresolved = []
+
+    def _walk(value):
+        if isinstance(value, str) and value.startswith("$"):
+            unresolved.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                _walk(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                _walk(item)
+
+    _walk(api_args)
+    return unresolved
+
+def build_artifact_summary(registry):
+    lines = []
+
+    uploaded = []
+    for spec in INPUT_SPECS:
+        key = spec["key"]
+        if registry.get(key):
+            uploaded.append(f"- ${key} | uploaded input | path={registry[key]}")
+    if uploaded:
+        lines.append("Uploaded inputs:")
+        lines.extend(uploaded)
+
+    artifacts = registry.get("artifacts", [])
+    if artifacts:
+        lines.append("")
+        lines.append("Reusable artifacts:")
+        for item in artifacts[-10:]:
+            lines.append(
+                f"- ${item['id']} | type={item['type']} | tool={item['tool']} | path={item['path']}"
+            )
+
+    alias_lines = []
+    if registry.get("latest_image"):
+        alias_lines.append(f"- $latest_image | path={registry['latest_image']}")
+    if registry.get("latest_vector"):
+        alias_lines.append(f"- $latest_vector | path={registry['latest_vector']}")
+    if registry.get("latest_output"):
+        alias_lines.append(f"- $latest_output | path={registry['latest_output']}")
+    if alias_lines:
+        lines.append("")
+        lines.append("Convenience aliases:")
+        lines.extend(alias_lines)
+
+    if not lines:
+        return "No uploaded inputs or reusable artifacts are currently available."
+
+    return "\n".join(lines)
+
+def _resolve_ref_value(value, registry):
+    if isinstance(value, str) and value.startswith("$"):
+        ref_key = value[1:]
+        return registry.get(ref_key, value)
+
+    if isinstance(value, list):
+        return [_resolve_ref_value(v, registry) for v in value]
+
+    if isinstance(value, dict):
+        return {k: _resolve_ref_value(v, registry) for k, v in value.items()}
+
+    return value
+
+
+def resolve_argument_references(api_args, registry):
+    return _resolve_ref_value(dict(api_args or {}), registry)
 
 def inject_runtime_arguments(api_name, api_args, registry, current_gpkg):
-    merged = dict(api_args)
+    merged = dict(api_args or {})
+
     for tool_arg, registry_key in TOOL_ARG_BINDINGS.get(api_name, {}).items():
-        if registry.get(registry_key):
+        if merged.get(tool_arg) in [None, ""] and registry.get(registry_key):
             merged[tool_arg] = registry[registry_key]
-    if api_name in GPKG_REQUIRED_TOOLS and current_gpkg:
+
+    if api_name in GPKG_REQUIRED_TOOLS and current_gpkg and merged.get("gpkg") in [None, ""]:
         merged["gpkg"] = current_gpkg
+
     for k, v in TOOL_DEFAULT_ARGUMENTS.get(api_name, {}).items():
         if merged.get(k) in [None, ""] or k not in merged:
             merged[k] = v
+
     return merged
 
+def register_artifact(registry, artifact_id, path, artifact_type, tool_name):
+    if not path:
+        return registry
 
-def update_registry_with_tool_response(registry, api_name, tool_resp):
+    resolved = resolve_existing_file(path) or path
+    registry[artifact_id] = resolved
+
+    artifacts = list(registry.get("artifacts", []))
+    if not any(item.get("id") == artifact_id for item in artifacts):
+        artifacts.append(
+            {
+                "id": artifact_id,
+                "path": resolved,
+                "type": artifact_type,
+                "tool": tool_name,
+            }
+        )
+    registry["artifacts"] = artifacts
+
+    if artifact_type == "image":
+        registry["latest_image"] = resolved
+        registry["latest_output"] = resolved
+    elif artifact_type == "vector":
+        registry["latest_vector"] = resolved
+        registry["latest_output"] = resolved
+    else:
+        registry["latest_output"] = resolved
+
+    return registry
+
+def update_registry_with_tool_response(registry, api_name, tool_resp, round_id=None):
     if not isinstance(tool_resp, dict):
         return registry
 
-    if api_name == "TVDIAnalysis":
-        out = tool_resp.get("output_path") or detect_output_visual(tool_resp)
-        if out:
-            registry["tvdi_result"] = out
+    registry = dict(registry)
+
     visual = detect_output_visual(tool_resp)
     if visual:
-        registry["latest_output"] = visual
+        artifact_id = f"round_{round_id}_{api_name.lower()}_image"
+        registry = register_artifact(
+            registry,
+            artifact_id=artifact_id,
+            path=visual,
+            artifact_type="image",
+            tool_name=api_name,
+        )
+
+    gpkg_path = tool_resp.get("gpkg")
+    if isinstance(gpkg_path, str):
+        resolved_gpkg = resolve_existing_file(gpkg_path)
+        if resolved_gpkg:
+            artifact_id = f"round_{round_id}_{api_name.lower()}_vector"
+            registry = register_artifact(
+                registry,
+                artifact_id=artifact_id,
+                path=resolved_gpkg,
+                artifact_type="vector",
+                tool_name=api_name,
+            )
+
+    if api_name == "TVDIAnalysis":
+        out = tool_resp.get("output_path") or visual
+        if out:
+            registry["tvdi_result"] = out
+            registry = register_artifact(
+                registry,
+                artifact_id=f"round_{round_id}_{api_name.lower()}_tvdi",
+                path=out,
+                artifact_type="image",
+                tool_name=api_name,
+            )
+
     return registry
 
 
@@ -541,6 +685,28 @@ def run_agent(user_question, *flat_args):
         api_name = action.get("name")
         raw_args = action.get("arguments", {})
         api_args = raw_args if isinstance(raw_args, dict) else {}
+        api_args = resolve_argument_references(api_args, registry)  
+
+        unresolved_refs = find_unresolved_references(api_args)
+        if unresolved_refs:
+            chat_msgs.append(
+                {
+                    "role": "assistant",
+                    "content": f"[Round {round_id}] ❌ Observation\n未解析的中间结果引用：{', '.join(unresolved_refs)}",
+                }
+            )
+            yield emit(None)
+            conversation.append({"role": "assistant", "content": model_output})
+            conversation.append(
+                {
+                    "role": "user",
+                    "content": (
+                        f"The action used unresolved references: {', '.join(unresolved_refs)}.\n"
+                        f"Please use one of the available uploaded inputs or reusable artifacts."
+                    ),
+                }
+            )
+            continue
 
         if not api_name:
             chat_msgs.append(
@@ -581,13 +747,22 @@ def run_agent(user_question, *flat_args):
             raw_tool_resp = {"error_code": -1, "text": f"Tool call failed: {exc}"}
 
         tool_resp = normalize_tool_response(raw_tool_resp, api_name)
+        obs_text = tool_resp.get("text", "")
         if "gpkg" in tool_resp:
             current_gpkg = tool_resp.get("gpkg")
 
-        registry = update_registry_with_tool_response(registry, api_name, tool_resp)
+        registry = update_registry_with_tool_response(
+            registry,
+            api_name,
+            tool_resp,
+            round_id=round_id,
+        )
+
+        artifact_summary = build_artifact_summary(registry)
         status = "✅" if tool_resp.get("error_code") == 0 else "❌"
-        obs_text = tool_resp.get("text", "")
-        chat_msgs.append({"role": "assistant", "content": f"[Round {round_id}] {status} Observation\n{obs_text}"})
+        chat_msgs.append(
+            {"role": "assistant", "content": f"[Round {round_id}] {status} Observation\n{obs_text}"}
+        )
         download = registry.get("latest_output") or registry.get("tvdi_result")
         yield emit(download)
 
@@ -595,29 +770,18 @@ def run_agent(user_question, *flat_args):
         conversation.append(
             {
                 "role": "user",
-                "content": f"OBSERVATION:\n{api_name} outputs: {obs_text}\nPlease summarize and answer the question.",
+                "content": (
+                    f"OBSERVATION:\n"
+                    f"{api_name} outputs: {obs_text}\n\n"
+                    f"{artifact_summary}\n\n"
+                    f"When a later tool should use an uploaded input or an intermediate result, "
+                    f"reference it explicitly in the action arguments using $key."
+                ),
             }
         )
 
     chat_msgs.append({"role": "assistant", "content": "达到最大轮数，已停止。"})
     yield emit(registry.get("latest_output") or registry.get("tvdi_result"))
-
-def render_upload_registry_html(registry):
-    registry = registry or {}
-    blocks = ['<div class="asset-list">']
-    populated = False
-
-    for spec in INPUT_SPECS:
-        item = registry.get(spec["key"])
-        if not item:
-            continue
-        populated = True
-        preview = html.escape(item.get("preview") or "")
-        label = html.escape(item.get("label") or spec["label"])
-        path = html.escape(item.get("path") or "")
-    
-    blocks.append("</div>")
-    return "".join(blocks)
 
 
 def render_output_history_html(history):
@@ -700,35 +864,11 @@ def clear_output_history():
 
 
 def make_upload_change_handler(spec_key):
-    spec = get_input_spec(spec_key)
-
-    def _handler(image_path, upload_registry):
+    def _handler(image_path):
         preview_path, original_tif = handle_upload(image_path)
-        bound_path = normalize_uploaded_input(
-            preview_path, original_tif, sample_aliases=spec.get("sample_aliases")
-        )
-        upload_registry = dict(upload_registry or {})
-        if bound_path:
-            upload_registry[spec_key] = {
-                "label": spec["label"],
-                "path": bound_path,
-                "preview": preview_path or bound_path,
-                "group": spec["group"],
-                "status": "ready",
-            }
-        else:
-            upload_registry.pop(spec_key, None)
-
-        return (
-            preview_path,
-            original_tif,
-            upload_registry,
-            render_upload_registry_html(upload_registry),
-        )
-
+        return preview_path, original_tif
     return _handler
-
-
+    
 def run_agent_with_ui(user_question, *payload):
     flat_args = payload[:-1]
     output_history = payload[-1] or []
@@ -746,13 +886,11 @@ def run_agent_with_ui(user_question, *payload):
 
 def reset_ui_v2():
     outputs = [
-        "",                              # user_input
-        render_chat_html([]),            # chat_html
-        [],                              # batch_download_files
-        render_upload_registry_html({}), # upload_summary_html
-        render_output_history_html([]),  # output_history_html
-        {},                              # upload_registry_state
-        [],                              # output_history_state
+        "",                             # user_input
+        render_chat_html([]),           # chat_html
+        [],                             # batch_download_files
+        render_output_history_html([]), # output_history_html
+        [],                             # output_history_state
     ]
     for _ in INPUT_SPECS:
         outputs.extend([None, None])     # image component + original tif state
@@ -987,14 +1125,6 @@ body {
     overflow-y: auto !important;
 }
 
-/* 左侧上传摘要仍然固定块高 */
-.upload-summary-scroll {
-    flex: 0 0 auto !important;
-    min-height: 0 !important;
-    max-height: 140px;
-    overflow-y: auto !important;
-}
-
 .upload-panel-body {
     display: flex;
     flex-direction: column;
@@ -1138,14 +1268,12 @@ body {
     min-height: 200px;
 }
 
-.asset-list,
 .history-list {
     display: flex;
     flex-direction: column;
     gap: 10px;
 }
 
-.asset-item,
 .history-item {
     display: grid;
     grid-template-columns: 76px 1fr;
@@ -1157,7 +1285,6 @@ body {
     padding: 10px;
 }
 
-.asset-thumb-wrap,
 .history-thumb-wrap {
     width: 76px;
     height: 76px;
@@ -1167,7 +1294,6 @@ body {
     background: #fff;
 }
 
-.asset-thumb,
 .history-thumb {
     width: 100%;
     height: 100%;
@@ -1175,12 +1301,10 @@ body {
     display: block;
 }
 
-.asset-meta,
 .history-meta {
     min-width: 0;
 }
 
-.asset-title,
 .history-title-row strong {
     display: block;
     color: var(--c-text);
@@ -1188,14 +1312,12 @@ body {
     line-height: 1.35;
 }
 
-.asset-sub,
 .history-sub {
     margin-top: 4px;
     color: var(--c-muted);
     font-size: 12px;
 }
 
-.asset-path,
 .history-path {
     margin-top: 4px;
     color: #6f879b;
@@ -1368,7 +1490,6 @@ LOGO_PATH = os.path.join("/home/ubuntu/01_Code/OpenEarthAgent/assets/nwpu-logo.p
 
 with gr.Blocks(**blocks_kwargs) as demo:
     state_components, image_components = {}, {}
-    upload_registry_state = gr.State({})
     output_history_state = gr.State([])
 
     gr.HTML(
@@ -1452,11 +1573,6 @@ with gr.Blocks(**blocks_kwargs) as demo:
                                                         elem_classes=["upload-slot"],
                                                     )
                                                     state_components[spec["key"]] = gr.State()
-
-                        upload_summary_html = gr.HTML(
-                            value=render_upload_registry_html({}),
-                            elem_classes=["scroll-y", "upload-summary-scroll"],
-                        )
 
                     # Example second in code
                     with gr.Column(elem_classes=["panel-card", "left-sub-card"]):
@@ -1551,12 +1667,10 @@ with gr.Blocks(**blocks_kwargs) as demo:
     for spec in INPUT_SPECS:
         image_components[spec["key"]].change(
             fn=make_upload_change_handler(spec["key"]),
-            inputs=[image_components[spec["key"]], upload_registry_state],
+            inputs=[image_components[spec["key"]]],
             outputs=[
                 image_components[spec["key"]],
                 state_components[spec["key"]],
-                upload_registry_state,
-                upload_summary_html,
             ],
             trigger_mode="once",
         )
@@ -1591,9 +1705,7 @@ with gr.Blocks(**blocks_kwargs) as demo:
         user_input,
         chat_html,
         batch_download_files,
-        upload_summary_html,
         output_history_html,
-        upload_registry_state,
         output_history_state,
     ]
     for spec in INPUT_SPECS:

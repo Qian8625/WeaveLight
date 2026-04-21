@@ -29,8 +29,8 @@ You are a remote sensing assistant specialized in solving geospatial reasoning t
 - TVDIAnalysis: Compute the Temperature Vegetation Dryness Index (TVDI) from NDVI and LST rasters, and then calculate the percentage of pixels relative to a specified threshold. Example: {"name":"TVDIAnalysis","arguments":{"ndvi_path":"ndvi.tif","lst_path":"lst.tif","output_path":"tvdi_result.tif","threshold":0.75,"mode":"above"}}
 - SARToRGB: Translate an input SAR image into an RGB image using a fixed pretrained model.  Example: {"name":"SARToRGB","arguments":{"image":"img_1"}}
 - SARPreprocessing: Preprocess a SAR image and save the output as a PNG image. Example: {"name":"SARPreprocessing","arguments":{"image":"img_1"}}
-- Terminate: End the reasoning process and return the final answer. Example: {"name":"Terminate","arguments": {"ans":"Downtown area expanded by ~1.8 km² between 2018 and 2022."}}
 - SkillExecutor: Execute a named skill defined in the skill library. Example: {"name":"SkillExecutor","arguments":{"skill_name":"TargetLocateMeasureSkill","image":"img_1","target":"ship","mode":"locate"}}
+- Terminate: End the reasoning process and return the final answer. Example: {"name":"Terminate","arguments": {"ans":"Downtown area expanded by ~1.8 km² between 2018 and 2022."}}
 
 
 To solve the problem:

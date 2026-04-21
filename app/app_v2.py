@@ -1655,6 +1655,29 @@ with gr.Blocks(**blocks_kwargs) as demo:
                                                 "Locate and estimate the distance between aircrafts in the scene. Assuming GSD 0.6 px/meter", 
                                                 primary_image="./assets/TG_P0009.png"
                                                 ),
+                                            make_example(
+                                                "For the area within a 1000m radius of Tokyo Skytree, compute and map the travel distances between each kindergarten and the nearest police station.",
+                                            ),
+                                            make_example(
+                                                "Draw a box around the largest destroyed building in the image.",
+                                                primary_image="./assets/TG_santa-rosa-wildfire_00000102_post_disaster.png"
+                                            ),
+                                            make_example(
+                                                "How many cars are there and are all of them traveling in the southwest direction?",
+                                                primary_image="./assets/TG_P0214.png"
+                                            ),
+                                            make_example(
+                                                "Detect all red house regions and calculate their combined area in square meters, assuming a ground sampling distance (GSD) of 0.5 meters per pixel.And draw it in the diagram.",
+                                                primary_image="./assets/TG_70028.jpg"
+                                            ),
+                                            make_example(
+                                                "Segment the road roundabout and measure its pixel area. Convert that pixel count to square meters using a ground sample distance of 0.132599419033 m/pixel. ",
+                                                primary_image="./assets/TG_P0104.png"
+                                            ),
+                                            make_example(
+                                                "How many aircraft are parked at the terminal apron, and what are their color attributes? Are they have same color?",
+                                                primary_image="./assets/TG_P0010.png"
+                                            )
                                         ],
                                         inputs=example_inputs,
                                         preprocess=False,
@@ -1662,8 +1685,7 @@ with gr.Blocks(**blocks_kwargs) as demo:
                                 with gr.Tab("Geo3DAnalyze"):
                                     gr.Examples(
                                         examples=[
-                                            make_example("For Manchester State Forest, South Carolina, United States, create a DEM layer from GEE, generate 20 m contours and 100 m elevation bands, and summarize the elevation range.",),
-                                            make_example("For the area within a 1000 m radius of Edinburgh Castle, generate a DEM layer, create contour lines, and visualize the resulting terrain bands on the map.",),
+                                            make_example("For the area within a 1000 m radius of Shimen Reservoir,China, generate a DEM layer, create contour lines, and visualize the create contour lines on the map.",),
                                         ],
                                         inputs=example_inputs,
                                         preprocess=False,
@@ -1675,10 +1697,14 @@ with gr.Blocks(**blocks_kwargs) as demo:
                                                 "Please convert this SAR image to an RGB image",
                                                 primary_image="./assets/sar_test_1.png"
                                             ),
-                                           make_example(
+                                            make_example(
                                                 "First, the SAR image is optimized for noise reduction, and then SAR to GB conversion is performed. Next, object detection is performed, then marking is performed on the converted RGB image, and finally image description is performed",
                                                 primary_image="./assets/sar_test_1.png"
                                             ),
+                                            make_example(
+                                                "Can you check the image if the ship is heading towards the shore?",
+                                                primary_image="./assets/000642.jpg"
+                                            )
                                         ],
                                         inputs=example_inputs,
                                         preprocess=False,
@@ -1691,6 +1717,18 @@ with gr.Blocks(**blocks_kwargs) as demo:
                                             ),
                                            make_example(
                                                 "Find remote sensing images from June 2023, output the number of images, and describe the last image",
+                                            ),
+                                        ],
+                                        inputs=example_inputs,
+                                        preprocess=False,
+                                    )
+                                with gr.Tab("Time Series Analyze"):
+                                    gr.Examples(
+                                        examples=[
+                                            make_example(
+                                                "What fraction of the buildings present before the event are missing afterward (destroyed), expressed as a percentage?",
+                                                time1_image="./assets/TG_santa-rosa-wildfire_00000181_pre_disaster.png",
+                                                time2_image="./assets/TG_santa-rosa-wildfire_00000181_post_disaster.png"
                                             ),
                                         ],
                                         inputs=example_inputs,

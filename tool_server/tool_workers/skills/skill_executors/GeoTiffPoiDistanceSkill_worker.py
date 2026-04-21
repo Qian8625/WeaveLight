@@ -17,7 +17,7 @@ import argparse
 import os
 import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -36,27 +36,6 @@ logger = build_logger(__file__, f"GeoTiffPoiDistanceSkill_worker_{worker_id}.log
 
 
 class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
-    """
-    First-version composite skill.
-
-    High-level flow:
-      1) Get bbox from GeoTIFF
-      2) Create AOI gpkg from bbox
-      3) Add POI layers into gpkg
-      4) Compute distances between two chosen layers
-      5) Render layers back on GeoTIFF
-
-    Notes:
-      - This first version assumes:
-          * GetAreaBoundary / AddPoisLayer / ComputeDistance are already registered online tools
-          * GetBboxFromGeotiff / DisplayOnGeotiff are available as offline workers
-      - For stability, poi_specs should be explicit OSM queries, for example:
-          [
-            {"query": {"tourism": "museum"}, "layer_name": "museums"},
-            {"query": {"shop": "mall"}, "layer_name": "malls"}
-          ]
-    """
-
     def __init__(
         self,
         controller_addr: str,
@@ -71,7 +50,6 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
         task_timeout: float = 180.0,
     ):
         self.tool_addr_cache: Dict[str, str] = {}
-
         super().__init__(
             controller_addr=controller_addr,
             worker_addr=worker_addr,
@@ -88,14 +66,10 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
     def init_model(self):
         logger.info(f"{self.model_name} initialized successfully.")
 
-    # -----------------------------
-    # Helpers
-    # -----------------------------
     def _resolve_tool_addr(self, tool_name: str) -> str:
         cached = self.tool_addr_cache.get(tool_name)
         if cached:
             return cached
-
         try:
             ret = requests.post(
                 self.controller_addr + "/get_worker_address",
@@ -111,13 +85,13 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
         except Exception as e:
             raise RuntimeError(f"Failed to resolve tool '{tool_name}': {e}") from e
 
-    def _call_online_tool(self, tool_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _call_online_tool(self, tool_name: str, payload: Dict[str, Any], timeout: int = 180) -> Dict[str, Any]:
         addr = self._resolve_tool_addr(tool_name)
         resp = requests.post(
             addr + "/worker_generate",
             headers={"User-Agent": self.model_name},
             json=payload,
-            timeout=180,
+            timeout=timeout,
         )
         resp.raise_for_status()
         return resp.json()
@@ -130,10 +104,6 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
 
     @staticmethod
     def _parse_bbox_from_text(text: str) -> List[float]:
-        """
-        Expected text format from GetBboxFromGeotiff:
-          "Bbox (west, south, east, north): (w, s, e, n)"
-        """
         m = re.search(
             r"Bbox\s*\(west,\s*south,\s*east,\s*north\):\s*\(\s*([-+0-9.]+)\s*,\s*([-+0-9.]+)\s*,\s*([-+0-9.]+)\s*,\s*([-+0-9.]+)\s*\)",
             text,
@@ -142,12 +112,16 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
             raise ValueError(f"Unable to parse bbox from text: {text}")
         return [float(m.group(i)) for i in range(1, 5)]
 
+    @staticmethod
+    def _is_no_poi_case(text: str) -> bool:
+        text = (text or "").lower()
+        return "no pois found" in text or "no poi found" in text
+
     def _normalize_poi_specs(self, poi_specs: Any) -> List[Dict[str, Any]]:
         if not isinstance(poi_specs, list) or len(poi_specs) < 2:
             raise ValueError("poi_specs must be a list with at least 2 items.")
 
         normalized: List[Dict[str, Any]] = []
-
         for idx, item in enumerate(poi_specs):
             if not isinstance(item, dict):
                 raise ValueError(f"poi_specs[{idx}] must be an object.")
@@ -166,18 +140,56 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
                 else:
                     layer_name = f"poi_layer_{idx + 1}"
 
-            normalized.append(
-                {
-                    "query": query,
-                    "layer_name": layer_name,
-                }
-            )
-
+            normalized.append({"query": query, "layer_name": layer_name})
         return normalized
 
-    # -----------------------------
-    # Main
-    # -----------------------------
+    def _render_with_fallback(
+        self,
+        gpkg: str,
+        layers: List[str],
+        geotiff: str,
+        show_names: bool,
+        skill_trace: List[Dict[str, Any]],
+    ) -> Tuple[Optional[str], Optional[str]]:
+        display_resp = display_on_geotiff_generate(
+            {
+                "gpkg": gpkg,
+                "layers": layers,
+                "geotiff": geotiff,
+                "show_names": show_names,
+            }
+        )
+        skill_trace.append(
+            {
+                "tool": "DisplayOnGeotiff",
+                "status": "success" if display_resp.get("error_code") == 0 else "failed",
+                "text": display_resp.get("text", ""),
+            }
+        )
+        if display_resp.get("error_code") == 0 and display_resp.get("image"):
+            return display_resp.get("image"), None
+
+        try:
+            map_resp = self._call_online_tool(
+                "DisplayOnMap",
+                {"gpkg": gpkg, "layers": layers},
+                timeout=180,
+            )
+            skill_trace.append(
+                {
+                    "tool": "DisplayOnMap",
+                    "status": "success" if map_resp.get("error_code") == 0 else "failed",
+                    "text": map_resp.get("text", ""),
+                }
+            )
+            if map_resp.get("error_code") == 0 and map_resp.get("image"):
+                return map_resp.get("image"), display_resp.get("text")
+            return None, map_resp.get("text") or display_resp.get("text")
+        except Exception as e:
+            msg = f"DisplayOnMap fallback failed: {e}"
+            skill_trace.append({"tool": "DisplayOnMap", "status": "failed", "text": msg})
+            return None, display_resp.get("text") or msg
+
     def generate(self, params: Dict[str, Any]) -> Dict[str, Any]:
         geotiff = params.get("geotiff")
         poi_specs = params.get("poi_specs")
@@ -198,7 +210,6 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
         current_gpkg: Optional[str] = None
 
         try:
-            # 1) bbox from geotiff (offline)
             bbox_resp = get_bbox_generate({"geotiff": geotiff})
             skill_trace.append(
                 {
@@ -218,7 +229,6 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
             bbox = self._parse_bbox_from_text(bbox_resp.get("text", ""))
             area_str = f"({bbox[0]}, {bbox[1]}, {bbox[2]}, {bbox[3]})"
 
-            # 2) area boundary gpkg (online)
             aoi_payload: Dict[str, Any] = {"area": area_str}
             if buffer_m is not None:
                 aoi_payload["buffer_m"] = buffer_m
@@ -240,10 +250,9 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
                 }
 
             current_gpkg = aoi_resp["gpkg"]
-
-            # 3) add poi layers (online)
             normalized_specs = self._normalize_poi_specs(poi_specs)
             added_layers: List[str] = []
+            empty_layers: List[str] = []
 
             for i, spec in enumerate(normalized_specs, start=1):
                 add_resp = self._call_online_tool(
@@ -254,16 +263,20 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
                         "layer_name": spec["layer_name"],
                     },
                 )
+                status = "success" if add_resp.get("error_code") == 0 else ("empty" if self._is_no_poi_case(add_resp.get("text", "")) else "failed")
                 skill_trace.append(
                     {
                         "step": 2 + i,
                         "tool": "AddPoisLayer",
-                        "status": "success" if add_resp.get("error_code") == 0 else "failed",
+                        "status": status,
                         "layer_name": spec["layer_name"],
                         "text": add_resp.get("text", ""),
                     }
                 )
                 if add_resp.get("error_code") != 0:
+                    if self._is_no_poi_case(add_resp.get("text", "")):
+                        empty_layers.append(spec["layer_name"])
+                        continue
                     return {
                         "text": f"AddPoisLayer failed for layer '{spec['layer_name']}': {add_resp.get('text', '')}",
                         "error_code": 1,
@@ -272,9 +285,38 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
                     }
                 added_layers.append(spec["layer_name"])
 
-            # 4) compute distance (online)
-            src_layer = params.get("src_layer") or added_layers[0]
-            tar_layer = params.get("tar_layer") or added_layers[1]
+            src_layer = params.get("src_layer") or normalized_specs[0]["layer_name"]
+            tar_layer = params.get("tar_layer") or normalized_specs[1]["layer_name"]
+
+            if src_layer in empty_layers or tar_layer in empty_layers:
+                layers_to_render = [layer for layer in [src_layer, tar_layer] if layer in added_layers]
+                rendered_image = None
+                render_warning = None
+                if layers_to_render:
+                    rendered_image, render_warning = self._render_with_fallback(
+                        gpkg=current_gpkg,
+                        layers=layers_to_render,
+                        geotiff=geotiff,
+                        show_names=show_names,
+                        skill_trace=skill_trace,
+                    )
+                result = {
+                    "text": (
+                        f"Distance workflow completed with empty-result handling. "
+                        f"No POIs were found for layer(s): {empty_layers}. "
+                        f"Distance computation between '{src_layer}' and '{tar_layer}' was skipped."
+                    ),
+                    "error_code": 0,
+                    "gpkg": current_gpkg,
+                    "distance_computed": False,
+                    "empty_layers": empty_layers,
+                    "skill_trace": skill_trace,
+                }
+                if rendered_image:
+                    result["image"] = rendered_image
+                if render_warning:
+                    result["render_warning"] = render_warning
+                return result
 
             dist_resp = self._call_online_tool(
                 "ComputeDistance",
@@ -287,7 +329,7 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
             )
             skill_trace.append(
                 {
-                    "step": 3 + len(added_layers),
+                    "step": 3 + len(normalized_specs),
                     "tool": "ComputeDistance",
                     "status": "success" if dist_resp.get("error_code") == 0 else "failed",
                     "text": dist_resp.get("text", ""),
@@ -302,52 +344,42 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
                 }
 
             distance_layer = f"{src_layer}_to_{tar_layer}_distances"
-
-            # 5) render on geotiff (offline)
             layers_to_render = params.get("layers_to_render")
             if not layers_to_render:
                 layers_to_render = [src_layer, tar_layer]
                 if render_distance_layer:
                     layers_to_render.append(distance_layer)
 
-            display_resp = display_on_geotiff_generate(
-                {
-                    "gpkg": current_gpkg,
-                    "layers": layers_to_render,
-                    "geotiff": geotiff,
-                    "show_names": show_names,
-                }
+            rendered_image, render_warning = self._render_with_fallback(
+                gpkg=current_gpkg,
+                layers=layers_to_render,
+                geotiff=geotiff,
+                show_names=show_names,
+                skill_trace=skill_trace,
             )
-            skill_trace.append(
-                {
-                    "step": 4 + len(added_layers),
-                    "tool": "DisplayOnGeotiff",
-                    "status": "success" if display_resp.get("error_code") == 0 else "failed",
-                    "text": display_resp.get("text", ""),
-                }
-            )
-            if display_resp.get("error_code") != 0:
-                return {
-                    "text": f"DisplayOnGeotiff failed: {display_resp.get('text', '')}",
-                    "error_code": 1,
-                    "gpkg": current_gpkg,
-                    "skill_trace": skill_trace,
-                }
 
             summary = (
                 f"GeoTIFF POI distance workflow completed successfully. "
                 f"Added layers: {added_layers}. "
-                f"Computed distances between '{src_layer}' and '{tar_layer}'. "
-                f"Rendered layers on the GeoTIFF."
+                f"Computed distances between '{src_layer}' and '{tar_layer}'."
             )
+            if render_warning and rendered_image:
+                summary += " Primary GeoTIFF renderer failed; fallback renderer DisplayOnMap was used."
+            elif render_warning and not rendered_image:
+                summary += f" Rendering failed after fallback attempts: {render_warning}"
 
-            return {
+            result = {
                 "text": summary + "\n\n" + dist_resp.get("text", ""),
                 "error_code": 0,
                 "gpkg": current_gpkg,
-                "image": display_resp.get("image"),
                 "skill_trace": skill_trace,
+                "distance_computed": True,
             }
+            if rendered_image:
+                result["image"] = rendered_image
+            if render_warning:
+                result["render_warning"] = render_warning
+            return result
 
         except Exception as e:
             logger.exception(f"{self.model_name} failed: {e}")
@@ -366,65 +398,40 @@ class GeoTiffPoiDistanceSkillWorker(BaseToolWorker):
                 "description": (
                     "Given a GeoTIFF and explicit POI specs, automatically extracts the AOI "
                     "from the GeoTIFF, creates an AOI GeoPackage, adds POI layers, computes "
-                    "distances between two layers, and renders the result back onto the GeoTIFF."
+                    "distances between two layers, and renders the result using GeoTIFF rendering "
+                    "or a fallback map renderer when necessary."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "geotiff": {
-                            "type": "string",
-                            "description": "Path to the input GeoTIFF file.",
-                        },
+                        "geotiff": {"type": "string", "description": "Path to the input GeoTIFF file."},
                         "poi_specs": {
                             "type": "array",
-                            "description": (
-                                "A list of at least 2 POI specs. "
-                                "Each item should include query and optionally layer_name."
-                            ),
+                            "description": "A list of at least 2 POI specs. Each item should include query and optionally layer_name.",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "query": {
-                                        "description": (
-                                            "OSM query dict or single POI name string. "
-                                            "Examples: {'tourism':'museum'} or 'Edinburgh Castle'"
-                                        )
-                                    },
-                                    "layer_name": {
-                                        "type": "string",
-                                        "description": "Layer name to save in the GeoPackage.",
-                                    },
+                                    "query": {"description": "OSM query dict or single POI name string."},
+                                    "layer_name": {"type": "string", "description": "Layer name to save in the GeoPackage."},
                                 },
                                 "required": ["query"],
                             },
                         },
-                        "src_layer": {
-                            "type": "string",
-                            "description": "Optional explicit source layer name for distance computation.",
-                        },
-                        "tar_layer": {
-                            "type": "string",
-                            "description": "Optional explicit target layer name for distance computation.",
-                        },
-                        "buffer_m": {
-                            "type": "number",
-                            "description": "Optional buffer distance in meters around the bbox-derived AOI.",
-                        },
-                        "top": {
-                            "type": "integer",
-                            "description": "How many nearest targets per source to keep. Default is 1.",
-                        },
+                        "src_layer": {"type": "string", "description": "Optional explicit source layer name."},
+                        "tar_layer": {"type": "string", "description": "Optional explicit target layer name."},
+                        "buffer_m": {"type": "number", "description": "Optional buffer distance in meters."},
+                        "top": {"type": "integer", "description": "How many nearest targets per source to keep."},
                         "show_names": {
                             "type": "boolean",
-                            "description": "Whether to render feature names on the output GeoTIFF.",
+                            "description": "Whether to request feature names on renderers that support it.",
                         },
                         "render_distance_layer": {
                             "type": "boolean",
-                            "description": "Whether to overlay the computed distance layer on the GeoTIFF.",
+                            "description": "Whether to overlay the computed distance layer when rendering.",
                         },
                         "layers_to_render": {
                             "type": "array",
-                            "description": "Optional custom layer list to render on the GeoTIFF.",
+                            "description": "Optional custom layer list to render.",
                             "items": {"type": "string"},
                         },
                     },

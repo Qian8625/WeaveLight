@@ -16,7 +16,7 @@ import argparse
 import os
 import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
@@ -35,23 +35,6 @@ logger = build_logger(__file__, f"GeoTIFFPoiExploreSkill_worker_{worker_id}.log"
 
 
 class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
-    """
-    Composite skill for GeoTIFF POI exploration tasks.
-
-    Supported task types:
-      - visualize: visualize one or more POI layers on a GeoTIFF
-      - existence: determine whether specified POIs exist in the GeoTIFF AOI
-      - count: count POIs for one or more classes
-      - surrounding_description: visualize POIs, then describe the rendered result
-
-    Workflow:
-      1. Get bbox from GeoTIFF
-      2. Create AOI gpkg from bbox via GetAreaBoundary
-      3. Add one or more POI layers via AddPoisLayer
-      4. Optionally render layers on GeoTIFF via DisplayOnGeotiff
-      5. Optionally describe rendered image via ImageDescription
-    """
-
     def __init__(
         self,
         controller_addr: str,
@@ -82,9 +65,6 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
     def init_model(self):
         logger.info(f"{self.model_name} initialized successfully.")
 
-    # -----------------------------
-    # Helpers
-    # -----------------------------
     def _resolve_tool_addr(self, tool_name: str) -> str:
         cached = self.tool_addr_cache.get(tool_name)
         if cached:
@@ -134,7 +114,6 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
             raise ValueError("poi_specs must be a non-empty list.")
 
         normalized: List[Dict[str, Any]] = []
-
         for idx, item in enumerate(poi_specs):
             if not isinstance(item, dict):
                 raise ValueError(f"poi_specs[{idx}] must be an object.")
@@ -153,22 +132,71 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
                 else:
                     layer_name = f"poi_layer_{idx + 1}"
 
-            normalized.append(
-                {
-                    "query": query,
-                    "layer_name": layer_name,
-                }
-            )
+            normalized.append({"query": query, "layer_name": layer_name})
 
         return normalized
 
     @staticmethod
-    def _extract_integer_candidates(text: str) -> List[int]:
-        return [int(x) for x in re.findall(r"\d+", text or "")]
+    def _extract_saved_poi_count(text: str) -> int:
+        m = re.search(r"Saved\s+(\d+)\s+POIs?\s+to\s+layer\b", text or "", flags=re.IGNORECASE)
+        return int(m.group(1)) if m else 0
 
-    # -----------------------------
-    # Main
-    # -----------------------------
+    @staticmethod
+    def _is_no_poi_case(text: str) -> bool:
+        text = (text or "").lower()
+        return "no pois found" in text or "no poi found" in text
+
+    def _render_with_fallback(
+        self,
+        gpkg: str,
+        layers: List[str],
+        geotiff: str,
+        show_names: bool,
+        skill_trace: List[Dict[str, Any]],
+    ) -> Tuple[Optional[str], Optional[str]]:
+        display_resp = display_on_geotiff_generate(
+            {
+                "gpkg": gpkg,
+                "layers": layers,
+                "geotiff": geotiff,
+                "show_names": show_names,
+            }
+        )
+        skill_trace.append(
+            {
+                "tool": "DisplayOnGeotiff",
+                "status": "success" if display_resp.get("error_code") == 0 else "failed",
+                "text": display_resp.get("text", ""),
+            }
+        )
+        if display_resp.get("error_code") == 0 and display_resp.get("image"):
+            return display_resp.get("image"), None
+
+        # fallback renderer that does not depend on pin.png/icon_w path
+        try:
+            map_resp = self._call_tool(
+                "DisplayOnMap",
+                {
+                    "gpkg": gpkg,
+                    "layers": layers,
+                },
+                timeout=180,
+            )
+            skill_trace.append(
+                {
+                    "tool": "DisplayOnMap",
+                    "status": "success" if map_resp.get("error_code") == 0 else "failed",
+                    "text": map_resp.get("text", ""),
+                }
+            )
+            if map_resp.get("error_code") == 0 and map_resp.get("image"):
+                return map_resp.get("image"), display_resp.get("text")
+            return None, map_resp.get("text") or display_resp.get("text")
+        except Exception as e:
+            msg = f"DisplayOnMap fallback failed: {e}"
+            skill_trace.append({"tool": "DisplayOnMap", "status": "failed", "text": msg})
+            return None, display_resp.get("text") or msg
+
     def generate(self, params: Dict[str, Any]) -> Dict[str, Any]:
         geotiff = params.get("geotiff")
         poi_specs = params.get("poi_specs")
@@ -190,9 +218,9 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
         skill_trace: List[Dict[str, Any]] = []
         current_gpkg: Optional[str] = None
         rendered_image: Optional[str] = None
+        render_warning: Optional[str] = None
 
         try:
-            # 1) bbox from geotiff
             bbox_resp = get_bbox_generate({"geotiff": geotiff})
             skill_trace.append(
                 {
@@ -211,7 +239,6 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
             bbox = self._parse_bbox_from_text(bbox_resp.get("text", ""))
             area_str = f"({bbox[0]}, {bbox[1]}, {bbox[2]}, {bbox[3]})"
 
-            # 2) AOI boundary
             boundary_payload: Dict[str, Any] = {"area": area_str}
             if buffer_m is not None:
                 boundary_payload["buffer_m"] = buffer_m
@@ -233,7 +260,6 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
 
             current_gpkg = boundary_resp["gpkg"]
 
-            # 3) add poi layers
             normalized_specs = self._normalize_poi_specs(poi_specs)
             poi_summary: List[Dict[str, Any]] = []
             added_layers: List[str] = []
@@ -248,15 +274,25 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
                     },
                     timeout=180,
                 )
+                status = "success" if add_resp.get("error_code") == 0 else ("empty" if self._is_no_poi_case(add_resp.get("text", "")) else "failed")
                 skill_trace.append(
                     {
                         "tool": "AddPoisLayer",
-                        "status": "success" if add_resp.get("error_code") == 0 else "failed",
+                        "status": status,
                         "layer_name": spec["layer_name"],
                         "text": add_resp.get("text", ""),
                     }
                 )
                 if add_resp.get("error_code") != 0:
+                    if self._is_no_poi_case(add_resp.get("text", "")):
+                        poi_summary.append(
+                            {
+                                "layer_name": spec["layer_name"],
+                                "query": spec["query"],
+                                "count": 0,
+                            }
+                        )
+                        continue
                     return {
                         "text": f"AddPoisLayer failed for layer '{spec['layer_name']}': {add_resp.get('text', '')}",
                         "error_code": 1,
@@ -264,9 +300,7 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
                         "skill_trace": skill_trace,
                     }
 
-                nums = self._extract_integer_candidates(add_resp.get("text", ""))
-                count_guess = nums[-1] if nums else 0
-
+                count_guess = self._extract_saved_poi_count(add_resp.get("text", ""))
                 poi_summary.append(
                     {
                         "layer_name": spec["layer_name"],
@@ -276,41 +310,18 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
                 )
                 added_layers.append(spec["layer_name"])
 
-            # 4) Optionally render
-            if task_type in ["visualize", "surrounding_description"]:
-                display_resp = display_on_geotiff_generate(
-                    {
-                        "gpkg": current_gpkg,
-                        "layers": added_layers,
-                        "geotiff": geotiff,
-                        "show_names": show_names,
-                    }
+            if task_type in ["visualize", "surrounding_description"] and added_layers:
+                rendered_image, render_warning = self._render_with_fallback(
+                    gpkg=current_gpkg,
+                    layers=added_layers,
+                    geotiff=geotiff,
+                    show_names=show_names,
+                    skill_trace=skill_trace,
                 )
-                skill_trace.append(
-                    {
-                        "tool": "DisplayOnGeotiff",
-                        "status": "success" if display_resp.get("error_code") == 0 else "failed",
-                        "text": display_resp.get("text", ""),
-                    }
-                )
-                if display_resp.get("error_code") != 0:
-                    return {
-                        "text": f"DisplayOnGeotiff failed: {display_resp.get('text', '')}",
-                        "error_code": 1,
-                        "gpkg": current_gpkg,
-                        "poi_summary": poi_summary,
-                        "skill_trace": skill_trace,
-                    }
-                rendered_image = display_resp.get("image")
 
-            # 5) Optional surrounding description
             environment_description = None
             if describe_rendered and rendered_image and os.path.isfile(rendered_image):
-                desc_resp = self._call_tool(
-                    "ImageDescription",
-                    {"image": rendered_image},
-                    timeout=120,
-                )
+                desc_resp = self._call_tool("ImageDescription", {"image": rendered_image}, timeout=120)
                 skill_trace.append(
                     {
                         "tool": "ImageDescription",
@@ -321,30 +332,27 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
                 if desc_resp.get("error_code") == 0:
                     environment_description = desc_resp.get("text", "")
 
-            # 6) Build final response
             total_count = sum(item["count"] for item in poi_summary)
-            existence_answer = all(item["count"] > 0 for item in poi_summary)
+            existence_answer = all(item["count"] > 0 for item in poi_summary) if poi_summary else False
 
             if task_type == "visualize":
                 text = (
-                    f"GeoTIFF POI visualization completed successfully. "
-                    f"Added {len(added_layers)} layer(s) with an estimated total of {total_count} POIs."
+                    f"GeoTIFF POI visualization completed. Added {len(added_layers)} non-empty layer(s) "
+                    f"with estimated total {total_count} POIs."
                 )
             elif task_type == "existence":
-                text = (
-                    f"Existence check completed. "
-                    f"All requested POI classes exist in the AOI: {existence_answer}."
-                )
+                text = f"Existence check completed. All requested POI classes exist in the AOI: {existence_answer}."
             elif task_type == "count":
+                text = f"POI counting completed. Estimated total count across requested layers: {total_count}."
+            else:
                 text = (
-                    f"POI counting completed successfully. "
-                    f"Estimated total count across requested layers: {total_count}."
+                    f"GeoTIFF POI exploration completed. Estimated total count across requested layers: {total_count}."
                 )
-            else:  # surrounding_description
-                text = (
-                    f"GeoTIFF POI exploration and rendered-scene description completed successfully. "
-                    f"Estimated total count across requested layers: {total_count}."
-                )
+
+            if render_warning and not rendered_image:
+                text += f" Rendering was skipped or failed after fallback attempts: {render_warning}"
+            elif render_warning and rendered_image:
+                text += " Primary GeoTIFF renderer failed; fallback renderer DisplayOnMap was used."
 
             result: Dict[str, Any] = {
                 "text": text,
@@ -355,12 +363,13 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
                 "exists": existence_answer,
                 "skill_trace": skill_trace,
             }
-
             if rendered_image:
                 result["image"] = rendered_image
             if environment_description:
                 result["environment_description"] = environment_description
                 result["text"] = text + "\n\n" + environment_description
+            if render_warning:
+                result["render_warning"] = render_warning
 
             return result
 
@@ -380,35 +389,21 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
                 "name": self.model_name,
                 "description": (
                     "Composite skill for GeoTIFF-based POI exploration. It extracts the AOI from a GeoTIFF, "
-                    "retrieves one or more POI classes, optionally renders them on the GeoTIFF, "
+                    "retrieves one or more POI classes, optionally renders them on the GeoTIFF or a fallback map, "
                     "checks existence, estimates counts, and can describe the rendered surrounding environment."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "geotiff": {
-                            "type": "string",
-                            "description": "Path to the input GeoTIFF file.",
-                        },
+                        "geotiff": {"type": "string", "description": "Path to the input GeoTIFF file."},
                         "poi_specs": {
                             "type": "array",
-                            "description": (
-                                "A non-empty list of POI specs. "
-                                "Each item should include query and optionally layer_name."
-                            ),
+                            "description": "A non-empty list of POI specs. Each item should include query and optionally layer_name.",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "query": {
-                                        "description": (
-                                            "OSM query dict or single POI name string. "
-                                            "Examples: {'amenity':'hospital'} or 'Edinburgh Castle'"
-                                        )
-                                    },
-                                    "layer_name": {
-                                        "type": "string",
-                                        "description": "Layer name to save in the GeoPackage.",
-                                    },
+                                    "query": {"description": "OSM query dict or single POI name string."},
+                                    "layer_name": {"type": "string", "description": "Layer name to save in the GeoPackage."},
                                 },
                                 "required": ["query"],
                             },
@@ -423,7 +418,7 @@ class GeoTIFFPoiExploreSkillWorker(BaseToolWorker):
                         },
                         "show_names": {
                             "type": "boolean",
-                            "description": "Whether to render feature names on the output GeoTIFF.",
+                            "description": "Whether to request feature names on renderers that support it.",
                         },
                         "describe_rendered": {
                             "type": "boolean",

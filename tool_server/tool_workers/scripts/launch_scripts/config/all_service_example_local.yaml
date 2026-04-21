@@ -345,11 +345,19 @@ tool_worker_config:
           config-path: /home/ubuntu/01_Code/OpenEarthAgent/models/cpk/cuhk-20260410T131636Z-3-001/cuhk/configs/2024-11-09T08-59-25-project.yaml
           model-path: /home/ubuntu/01_Code/OpenEarthAgent/models/cpk/cuhk-20260410T131636Z-3-001/cuhk/checkpoints/last.ckpt
           save_path: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/tools_output
+        
+  - SkillExecutor:
+      worker_name: SkillExecutor
+      job_name: skill_executor
+      calculate_type: control
+      cmd:
+        script-addr: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/online_workers/SkillExecutor_worker.py
+        port: 20032
+        host: "0.0.0.0"
 
 
 
 ### Skill Register
-
   - GeoTiffPoiDistanceSkill:
       worker_name: GeoTiffPoiDistanceSkill
       job_name: geotiff_poi_distance_skill
@@ -409,7 +417,7 @@ tool_worker_config:
       job_name: change_summary_skill
       calculate_type: control
       cmd:
-        script-addr: ./skills/skill_executors/ChangeSummarySkill_executor.py
+        script-addr: ./skills/skill_executors/ChangeSummarySkill_worker.py
         port: 20126
         host: "0.0.0.0"
 
@@ -419,5 +427,5 @@ tool_worker_config:
       calculate_type: control
       cmd:
         script-addr: ./skills/skill_executors/ConditionalCountSkill_worker.py
-        port: 20128
+        port: 20127
         host: "0.0.0.0"

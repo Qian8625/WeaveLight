@@ -355,6 +355,17 @@ tool_worker_config:
         port: 20032
         host: "0.0.0.0"
 
+  - SmallObjectDetection:
+        worker_name: SmallObjectDetection
+        job_name: small_object_detection
+        calculate_type: control
+        conda_env: tool3
+        cuda_visible_devices: "1"
+        cmd:
+          script-addr: /home/ubuntu/01_Code/OpenEarthAgent/tool_server/tool_workers/online_workers/SmallObjectDetection_worker.py
+          port: 20033
+          host: "0.0.0.0"
+          model-path: /home/ubuntu/01_Code/OpenEarthAgent/models/cpk/yolo11s-obb.pt
 
 
 ### Skill Register

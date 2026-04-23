@@ -22,7 +22,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 TOOLS_LIST = ["Calculator","OCR","DrawBox","AddText","GoogleSearch","Plot","Solver",
     "TextToBbox","ImageDescription","RegionAttributeDescription","CountGivenObject",
-    "ChangeDetection","SegmentObjectPixels","ObjectDetection",
+    "ChangeDetection","SegmentObjectPixels","ObjectDetection","SmallObjectDetection",
     "GetAreaBoundary","AddPoisLayer","ComputeDistance","DisplayOnMap",
     "AddIndexLayer","AddDEMLayer","ComputeIndexChange","ShowIndexLayer",
     "GetBboxFromGeotiff","DisplayOnGeotiff","Terminate"
@@ -176,7 +176,7 @@ def sim_score(ans_gold: str,ans_pred: str, question: str):
     
 
 def gettype(name: str):
-    perception = ['OCR', 'ImageDescription', 'RegionAttributeDescription', 'TextToBbox', 'ChangeDetection', 'ObjectDetection', 'SegmentObjectPixels', 'CountGivenObject']
+    perception = ['OCR', 'ImageDescription', 'RegionAttributeDescription', 'TextToBbox', 'ChangeDetection', 'ObjectDetection', 'SmallObjectDetection', 'SegmentObjectPixels', 'CountGivenObject']
     operation = ['DrawBox', 'AddText', 'GoogleSearch']
     logic = ['Calculator', 'Solver', 'Plot']  
     gis = ["GetAreaBoundary", "AddPoisLayer", "ComputeDistance", "DisplayOnMap", "AddIndexLayer", "AddDEMLayer", "ComputeIndexChange", "ShowIndexLayer", 'GetBboxFromGeotiff', "DisplayOnGeotiff"]

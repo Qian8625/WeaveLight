@@ -427,6 +427,11 @@ def register_artifact(registry, artifact_id, path, artifact_type, tool_name):
         return registry
 
     resolved = resolve_existing_file(path) or path
+    preview = resolved
+    if artifact_type == "image":
+        preview = make_preview_if_tif(resolved)
+        preview = resolve_existing_file(preview) or resolved
+
     registry[artifact_id] = resolved
 
     artifacts = list(registry.get("artifacts", []))
@@ -435,6 +440,7 @@ def register_artifact(registry, artifact_id, path, artifact_type, tool_name):
             {
                 "id": artifact_id,
                 "path": resolved,
+                "preview": preview,
                 "type": artifact_type,
                 "tool": tool_name,
             }
@@ -451,6 +457,75 @@ def register_artifact(registry, artifact_id, path, artifact_type, tool_name):
         registry["latest_output"] = resolved
 
     return registry
+
+def build_media_item(path, name=None):
+    resolved = resolve_existing_file(path)
+    if not resolved:
+        return None
+
+    preview = make_preview_if_tif(resolved)
+    preview_resolved = resolve_existing_file(preview) or resolved
+
+    return {
+        "path": resolved,
+        "preview": preview_resolved,
+        "name": name or os.path.basename(resolved),
+    }
+
+
+def collect_round_image_media(registry, round_id, api_name=None):
+    media = []
+    seen = set()
+
+    for item in registry.get("artifacts", []):
+        artifact_id = item.get("id", "")
+        artifact_type = item.get("type")
+        artifact_tool = item.get("tool")
+        artifact_path = item.get("path")
+
+        if artifact_type != "image":
+            continue
+        if not artifact_id.startswith(f"round_{round_id}_"):
+            continue
+        if api_name is not None and artifact_tool != api_name:
+            continue
+        if not artifact_path or artifact_path in seen:
+            continue
+
+        media_item = {
+            "path": artifact_path,
+            "preview": item.get("preview") or artifact_path,
+            "name": f"{artifact_tool} · {os.path.basename(artifact_path)}",
+        }
+        media.append(media_item)
+        seen.add(artifact_path)
+
+    return media
+
+def collect_action_input_media(api_args):
+    media = []
+    seen = set()
+
+    candidate_keys = [
+        "image", "geotiff", "pre_image", "post_image",
+        "nir_image", "ndvi_path", "lst_path"
+    ]
+
+    for key in candidate_keys:
+        value = api_args.get(key)
+        if not isinstance(value, str):
+            continue
+
+        resolved = resolve_existing_file(value)
+        if not resolved or resolved in seen:
+            continue
+
+        media_item = build_media_item(resolved, name=f"input:{key}")
+        if media_item:
+            media.append(media_item)
+            seen.add(resolved)
+
+    return media
 
 def update_registry_with_tool_response(registry, api_name, tool_resp, round_id=None):
     if not isinstance(tool_resp, dict):
@@ -566,9 +641,30 @@ def render_chat_html(messages):
             meta_items.append(f'<span class="round-pill">{html.escape(round_label)}</span>')
         meta_items.append(f'<span class="msg-badge {badge_class}">{badge_label}</span>')
         meta_items.append(f'<span class="msg-heading">{html.escape(heading)}</span>')
+
         body_html = f"<pre>{html.escape(body)}</pre>" if body else ""
+
+        media_html = ""
+        media_items = msg.get("media") or []
+        if media_items:
+            cards = []
+            for media in media_items:
+                preview = html.escape(media.get("preview", ""))
+                path = html.escape(media.get("path", ""))
+                name = html.escape(media.get("name", "image"))
+
+                cards.append(
+                    f"""
+                    <a class="msg-media-card" href="/gradio_api/file={path}" target="_blank">
+                        <img class="msg-media-img" src="/gradio_api/file={preview}" alt="{name}" />
+                        <div class="msg-media-name">{name}</div>
+                    </a>
+                    """
+                )
+            media_html = f'<div class="msg-media-grid">{"".join(cards)}</div>'
+
         blocks.append(
-            f'<div class="{bubble_class}"><div class="msg-meta">{"".join(meta_items)}</div>{body_html}</div>'
+            f'<div class="{bubble_class}"><div class="msg-meta">{"".join(meta_items)}</div>{body_html}{media_html}</div>'
         )
     blocks.append("</div>")
     return "".join(blocks)
@@ -733,10 +829,40 @@ def run_agent(user_question, *flat_args):
             return
 
         injected_args = inject_runtime_arguments(api_name, api_args, registry, current_gpkg)
+
+        if api_name == "SkillExecutor":
+            # 情况1：当前没有任何可用候选 skill，禁止走 SkillExecutor，强制回退 raw tools
+            if not candidate_skills:
+                chat_msgs.append(
+                    {
+                        "role": "assistant",
+                        "content": f"[Round {round_id}] ❌Observation\n There are currently no available skills matched. Please do not use SkillExecutor, but directly select the appropriate raw tools.",
+                    }
+                )
+                yield emit(None)
+                conversation.append({"role": "assistant", "content": model_output})
+                conversation.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "No suitable skill is available for this task. "
+                            "Do not use SkillExecutor. "
+                            "Please choose raw tools directly from the tool list and continue."
+                        ),
+                    }
+                )
+                continue
+
+            # 情况2：有候选 skill，但模型没填 skill_name，可以自动补第一个候选
+            if not injected_args.get("skill_name"):
+                injected_args["skill_name"] = candidate_skills[0]["skill_name"]
+
+        action_media = collect_action_input_media(injected_args)
         chat_msgs.append(
             {
                 "role": "assistant",
                 "content": f"[Round {round_id}] 🛠️ Action: {api_name}\nArgs:\n{json.dumps(injected_args, ensure_ascii=False, indent=2)}",
+                "media": action_media,
             }
         )
         yield emit(None)
@@ -758,10 +884,20 @@ def run_agent(user_question, *flat_args):
             round_id=round_id,
         )
 
+        round_media = collect_round_image_media(
+            registry,
+            round_id=round_id,
+            api_name=api_name,
+        )
+
         artifact_summary = build_artifact_summary(registry)
         status = "✅" if tool_resp.get("error_code") == 0 else "❌"
         chat_msgs.append(
-            {"role": "assistant", "content": f"[Round {round_id}] {status} Observation\n{obs_text}"}
+            {
+                "role": "assistant",
+                "content": f"[Round {round_id}] {status} Observation\n{obs_text}",
+                "media": round_media,
+            }
         )
         download = registry.get("latest_output") or registry.get("tvdi_result")
         yield emit(download)
@@ -1446,6 +1582,46 @@ body {
     line-height: 1.58;
 }
 
+.msg-media-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.msg-media-card {
+    display: block;
+    text-decoration: none;
+    background: #ffffff;
+    border: 1px solid #dbe5f1;
+    border-radius: 12px;
+    overflow: hidden;
+    transition: all 0.2s ease;
+}
+
+.msg-media-card:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(53, 88, 114, 0.10);
+}
+
+.msg-media-img {
+    width: 100%;
+    height: 180px;
+    object-fit: cover;
+    display: block;
+    background: #f5f8fc;
+}
+
+.msg-media-name {
+    padding: 8px 10px;
+    font-size: 11px;
+    color: var(--c-muted);
+    border-top: 1px solid #e8eef5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .send-btn button,
 .clear-btn button,
 .ghost-btn button {
@@ -1634,101 +1810,90 @@ with gr.Blocks(**blocks_kwargs) as demo:
                     with gr.Column(elem_classes=["panel-card", "left-sub-card"]):
                         gr.HTML(
                             "<div class='section-head'>"
-                            "<h3>Example 示例模板</h3>"
+                            "<h3>Example</h3>"
                             "</div>"
                         )
 
                         example_inputs = [user_input] + [image_components[spec["key"]] for spec in INPUT_SPECS]
                         with gr.Column(elem_classes=["left-sub-scroll"]):
                             with gr.Tabs():
-                                with gr.Tab("GeoIndex"):
+                                with gr.Tab("Det/Seg"):
                                     gr.Examples(
                                         examples=[
                                             make_example(
-                                                "Generate a preview from the NBR difference for Topanga State Park, Los Angeles, USA, covering December 2024 and February 2025.",
+                                                "Detect the aircraft in the picture.", 
+                                                primary_image="./assets/TG_P0009.png"
                                                 ),
+                                            make_example(
+                                                "Use a small target detection model to detect ships in the map and label them in the image.",
+                                                primary_image="./assets/b2_48_6.tif"
+                                            ),
                                             make_example(
                                                 "Visualize all museums and malls over the given GeoTIFF image, compute the distance between the closest pair, and finally annotate the image with this distance.", 
                                                 primary_image="./assets/S_10_preview.png"
                                                 ),
                                             make_example(
-                                                "Locate and estimate the distance between aircrafts in the scene. Assuming GSD 0.6 px/meter", 
-                                                primary_image="./assets/TG_P0009.png"
-                                                ),
-                                            make_example(
-                                                "For the area within a 1000m radius of Tokyo Skytree, compute and map the travel distances between each kindergarten and the nearest police station.",
+                                                "Segment the road roundabout and measure its pixel area. Convert that pixel count to square meters using a ground sample distance of 0.132599419033 m/pixel. ",
+                                                primary_image="./assets/TG_P0104.png"
                                             ),
+                                        ],
+                                        inputs=example_inputs,
+                                        preprocess=False,
+                                    )
+                                with gr.Tab("Attribute"):
+                                    gr.Examples(
+                                        examples=[
                                             make_example(
-                                                "Draw a box around the largest destroyed building in the image.",
-                                                primary_image="./assets/TG_santa-rosa-wildfire_00000102_post_disaster.png"
+                                                "Detect all red house targets and calculate the area of the largest red house (in square meters), and plot it in a chart.",
+                                                primary_image="./assets/TG_70028.jpg"
                                             ),
                                             make_example(
                                                 "How many cars are there and are all of them traveling in the southwest direction?",
                                                 primary_image="./assets/TG_P0214.png"
                                             ),
                                             make_example(
-                                                "Detect all red house regions and calculate their combined area in square meters, assuming a ground sampling distance (GSD) of 0.5 meters per pixel.And draw it in the diagram.",
-                                                primary_image="./assets/TG_70028.jpg"
-                                            ),
-                                            make_example(
-                                                "Segment the road roundabout and measure its pixel area. Convert that pixel count to square meters using a ground sample distance of 0.132599419033 m/pixel. ",
-                                                primary_image="./assets/TG_P0104.png"
-                                            ),
-                                            make_example(
                                                 "How many aircraft are parked at the terminal apron, and what are their color attributes? Are they have same color?",
                                                 primary_image="./assets/TG_P0010.png"
-                                            )
-                                        ],
-                                        inputs=example_inputs,
-                                        preprocess=False,
-                                    )
-                                with gr.Tab("Geo3DAnalyze"):
-                                    gr.Examples(
-                                        examples=[
+                                            ),
+                                            make_example(
+                                                "Can you check the image if the ship is heading towards the shore?",
+                                                primary_image="./assets/000642.jpg"
+                                            ),
                                             make_example("For the area within a 1000 m radius of Shimen Reservoir,China, generate a DEM layer, create contour lines, and visualize the create contour lines on the map.",),
                                         ],
                                         inputs=example_inputs,
                                         preprocess=False,
                                     )
-                                with gr.Tab("SARAnalyze"):
+                                with gr.Tab("SAR Trans/Det"):
                                     gr.Examples(
                                         examples=[
                                             make_example(
                                                 "Please convert this SAR image to an RGB image",
-                                                primary_image="./assets/sar_test_1.png"
+                                                primary_image="./assets/sar_test_3.png"
                                             ),
                                             make_example(
-                                                "First, the SAR image is optimized for noise reduction, and then SAR to GB conversion is performed. Next, object detection is performed, then marking is performed on the converted RGB image, and finally image description is performed",
-                                                primary_image="./assets/sar_test_1.png"
-                                            ),
-                                            make_example(
-                                                "Can you check the image if the ship is heading towards the shore?",
-                                                primary_image="./assets/000642.jpg"
-                                            )
-                                        ],
-                                        inputs=example_inputs,
-                                        preprocess=False,
-                                    )
-                                with gr.Tab("Time Retrieve"):
-                                    gr.Examples(
-                                        examples=[
-                                            make_example(
-                                                "Retrieving images from June 2023",
-                                            ),
-                                           make_example(
-                                                "Find remote sensing images from June 2023, output the number of images, and describe the last image",
+                                                "First, the SAR image is converted from SAR to RGB. Next, target detection is performed, and the target is then marked on the RGB image.",
+                                                primary_image="./assets/sar_test_3.png"
                                             ),
                                         ],
                                         inputs=example_inputs,
                                         preprocess=False,
                                     )
-                                with gr.Tab("Time Series Analyze"):
+                                with gr.Tab("TimeSeries Analyze"):
                                     gr.Examples(
                                         examples=[
                                             make_example(
-                                                "What fraction of the buildings present before the event are missing afterward (destroyed), expressed as a percentage?",
+                                                "Examine buildings damaged after the incident and express the target proportion of damaged in percentage.",
                                                 time1_image="./assets/TG_santa-rosa-wildfire_00000181_pre_disaster.png",
                                                 time2_image="./assets/TG_santa-rosa-wildfire_00000181_post_disaster.png"
+                                            ),
+                                            make_example(
+                                                "List all the damaged buildings in the post-disaster image..",
+                                                time1_image="./assets/TG_santa-rosa-wildfire_00000102_pre_disaster.png",
+                                                time2_image="./assets/TG_santa-rosa-wildfire_00000102_post_disaster.png"
+                                            ),
+                                            make_example(
+                                                "Find remote sensing images from June 2024, output the number of images, and describe the last image",
                                             ),
                                         ],
                                         inputs=example_inputs,

@@ -94,6 +94,11 @@ def main():
             "image": abs_path("tools_test_images/1.jpg")
         }),
 
+        ("SmallObjectDetection", {
+            "image": abs_path("tools_test_images/1.jpg"),
+            "text": "car"
+        }),
+
         ("SegmentObjectPixels", {
             "image": abs_path("tools_test_images/1.jpg"),
             "text": "red car"

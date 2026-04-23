@@ -151,6 +151,7 @@ class BaseToolInferencer(object):
                         "ChangeDetection",
                         "SegmentObjectPixels",
                         "ObjectDetection",
+                        "SmallObjectDetection",
                         "GetBboxFromGeotiff",
                         "DisplayOnGeotiff"
                     ]

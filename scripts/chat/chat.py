@@ -49,7 +49,8 @@ def extract_actions(text: str):
     
 IMAGE_REQUIRED_TOOLS = [ "OCR", "DrawBox", "AddText", "TextToBbox","CountGivenObject",
                         "ImageDescription", "RegionAttributeDescription","ChangeDetection",
-                        "SegmentObjectPixels","ObjectDetection","GetBboxFromGeotiff","DisplayOnGeotiff"
+                        "SegmentObjectPixels","ObjectDetection","SmallObjectDetection",
+                        "GetBboxFromGeotiff","DisplayOnGeotiff"
                     ]
 GPKG_REQUIRED_TOOLS = [ "AddPoisLayer","ComputeDistance","DisplayOnMap","AddIndexLayer",
                         "AddDEMLayer","ComputeIndexChange","ShowIndexLayer","DisplayOnGeotiff"

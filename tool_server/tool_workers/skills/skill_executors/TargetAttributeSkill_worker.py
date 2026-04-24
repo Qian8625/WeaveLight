@@ -47,7 +47,7 @@ class TargetAttributeSkillWorker(BaseToolWorker):
         worker_addr: str = "auto",
         worker_id: str = worker_id,
         no_register: bool = False,
-        model_name: str = "FineGrainedAttributeSkill",
+        model_name: str = "TargetAttributeSkill",
         limit_model_concurrency: int = 2,
         host: str = "0.0.0.0",
         port: Optional[int] = None,

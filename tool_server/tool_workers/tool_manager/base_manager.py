@@ -52,7 +52,7 @@ class ToolManager(object):
             
 
         miss_tool = []
-        for tool in ['RegionAttributeDescription', 'OCR', 'DrawBox', 'Plot', 'AddPoisLayer', 'GetAreaBoundary', 'ChangeDetection', 'Solver', 'SegmentObjectPixels', 'AddText', 'ObjectDetection', 'SmallObjectDetection', 'GoogleSearch', 'BaseModel', 'CountGivenObject', 'Calculator', 'SARDualFreqDiff','SARPreprocessing','SARToRGB','TVDIAnalysis', 'SliceGeoTIFF', 'AddDEMLayer','TimeSeriesAssetRetriever', 'SkillExecutor','CloudRemoval','GeoTiffPoiDistanceSkill','TargetLocateMeasureSkill','SARTargetLocateMeasureSkill','MultConfirmSkill','GeoTIFFPoiExploreSkill','TargetAttributeSkill','ChangeSummarySkill','ConditionalCountSkill']:
+        for tool in ['RegionAttributeDescription', 'OCR', 'DrawBox', 'Plot', 'AddPoisLayer', 'GetAreaBoundary', 'ChangeDetection', 'Solver', 'SegmentObjectPixels', 'AddText', 'ObjectDetection', 'SmallObjectDetection', 'GoogleSearch', 'BaseModel', 'CountGivenObject', 'Calculator', 'SARDualFreqDiff','SARPreprocessing','SARToRGB','TVDIAnalysis', 'SliceGeoTIFF', 'AddDEMLayer','TimeSeriesAssetRetriever', 'SkillExecutor','CloudRemoval','GeoTIFFPoiDistanceSkill','TargetLocateMeasureSkill','SARTargetLocateMeasureSkill','MultConfirmSkill','GeoTIFFPoiExploreSkill','TargetAttributeSkill','ChangeSummarySkill','ConditionalCountSkill']:
             if tool not in self.available_online_tools:
                 miss_tool.append(tool)
         if len(miss_tool) == 0:
@@ -85,7 +85,7 @@ class ToolManager(object):
             timeout_sec = 120
         elif tool_name in ["SliceGeoTIFF"]:
             timeout_sec = 600
-        elif tool_name in ['GeoTiffPoiDistanceSkill','TargetLocateMeasureSkill','SARTargetLocateMeasureSkill','MultConfirmSkill','GeoTIFFPoiExploreSkill','TargetAttributeSkill','ChangeSummarySkill','ConditionalCountSkill']:
+        elif tool_name in ['GeoTIFFPoiDistanceSkill','TargetLocateMeasureSkill','SARTargetLocateMeasureSkill','MultConfirmSkill','GeoTIFFPoiExploreSkill','TargetAttributeSkill','ChangeSummarySkill','ConditionalCountSkill']:
             timeout_sec = 300
         else:
             timeout_sec = 60  # timeout per attempt

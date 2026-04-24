@@ -84,6 +84,7 @@ TOOL_ARG_BINDINGS = {
     "RegionAttributeDescription": {"image": "primary_image"},
     "SegmentObjectPixels": {"image": "primary_image"},
     "ObjectDetection": {"image": "primary_image"},
+    "SmallObjectDetection": {"image": "primary_image"},
     "CloudRemoval": {
         "image": "primary_image",
         "nir_image": "time1_image",
@@ -1821,7 +1822,7 @@ with gr.Blocks(**blocks_kwargs) as demo:
                                     gr.Examples(
                                         examples=[
                                             make_example(
-                                                "Detect the aircraft in the picture.", 
+                                                "Detect the aircraft in the picture, draw it and estimate the distance between aircrafts in the scene. assuming GSD 0.6px/meter.", 
                                                 primary_image="./assets/TG_P0009.png"
                                                 ),
                                             make_example(

@@ -21,7 +21,7 @@ from tool_server.utils.server_utils import build_logger
 
 
 worker_id = str(uuid.uuid4())[:6]
-logger = build_logger(__file__, f"CrossModalConfirmationSkill_worker_{worker_id}.log")
+logger = build_logger(__file__, f"MultConfirmSkill_worker_{worker_id}.log")
 
 
 class MultConfirmSkillWorker(BaseToolWorker):
@@ -45,7 +45,7 @@ class MultConfirmSkillWorker(BaseToolWorker):
         worker_addr: str = "auto",
         worker_id: str = worker_id,
         no_register: bool = False,
-        model_name: str = "CrossModalConfirmationSkill",
+        model_name: str = "MultConfirmSkill",
         limit_model_concurrency: int = 2,
         host: str = "0.0.0.0",
         port: Optional[int] = None,

@@ -33,7 +33,7 @@ Use this skill to count objects under a condition that can be expressed visually
 
 # Do not use when
 
-- The task requires fine-grained comparison between two specific objects. Use `FineGrainedAttributeSkill`.
+- The task requires fine-grained comparison between two specific objects. Use `TargetAttributeSkill`.
 - The task requires exact metric measurements. Use `TargetLocateMeasureSkill`.
 - The task is change analysis. Use `ChangeSummarySkill`.
 

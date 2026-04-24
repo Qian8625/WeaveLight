@@ -44,7 +44,7 @@ Use this skill when the input is a SAR image and the downstream task is still ta
 # Do not use when
 
 - The input is already a normal RGB or optical image.
-- The task requires RGB/SAR comparison. Use `CrossModalConfirmationSkill`.
+- The task requires RGB/SAR comparison. Use `MultConfirmSkill`.
 - The task is bi-temporal change analysis. Use `ChangeSummarySkill`.
 
 # Input contract

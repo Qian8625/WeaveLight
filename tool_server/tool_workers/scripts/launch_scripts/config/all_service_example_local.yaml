@@ -369,12 +369,12 @@ tool_worker_config:
 
 
 ### Skill Register
-  - GeoTiffPoiDistanceSkill:
-      worker_name: GeoTiffPoiDistanceSkill
+  - GeoTIFFPoiDistanceSkill:
+      worker_name: GeoTIFFPoiDistanceSkill
       job_name: geotiff_poi_distance_skill
       calculate_type: control
       cmd:
-        script-addr: ./skills/skill_executors/GeoTiffPoiDistanceSkill_worker.py
+        script-addr: ./skills/skill_executors/GeoTIFFPoiDistanceSkill_worker.py
         port: 20120
         host: "0.0.0.0"
 

@@ -42,7 +42,7 @@ Use this skill for recurring single-image target tasks such as locating ships, a
 
 - The task requires SAR-specific preprocessing first. Use `SARTargetLocateMeasureSkill` instead.
 - The task requires two time points. Use `ChangeSummarySkill` instead.
-- The task requires RGB/SAR evidence fusion. Use `CrossModalConfirmationSkill` instead.
+- The task requires RGB/SAR evidence fusion. Use `MultConfirmSkill` instead.
 - The user asks for real-world distance or area but no `gsd_m_per_pixel` is available. In that case, return pixel-space results only.
 
 # Input contract

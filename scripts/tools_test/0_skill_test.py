@@ -283,7 +283,7 @@ def build_skill_examples(fixtures: Dict[str, Optional[str]], scratch_dir: str):
             },
         },
         {
-            "skill_name": "GeoTiffPoiDistanceSkill",
+            "skill_name": "GeoTIFFPoiDistanceSkill",
             "required_paths": [fixtures["geotiff"]],
             "params": {
                 "geotiff": fixtures["geotiff"],

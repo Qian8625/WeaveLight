@@ -114,13 +114,16 @@ def build_selected_skill_catalog(selected_skills: List[Dict[str, Any]]) -> str:
         return (
             "Selected Skills:\n"
             "No suitable skill was matched for the current query and inputs.\n"
-            "You should fall back to raw tools directly when needed."
+            "For this task, SkillExecutor is unavailable.\n"
+            "Do not mention, plan, or call SkillExecutor.\n"
+            "Use raw tools only."
         )
 
     catalog = load_skill_catalog()
     lines = [
         "Selected Skills:",
-        "Use SkillExecutor with one of the following skill names when appropriate.",
+        "SkillExecutor is available only for the following selected skill names.",
+        "Use SkillExecutor only when one of these skills clearly fits the task; otherwise use raw tools.",
         "",
     ]
 

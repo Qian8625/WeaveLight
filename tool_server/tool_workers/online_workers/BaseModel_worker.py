@@ -3,6 +3,12 @@ import argparse
 import uuid
 import os
 
+##### network config   ---by wys
+os.environ["HTTP_PROXY"] = "http://10.31.215.24:7897"
+os.environ["HTTPS_PROXY"] = "http://10.31.215.24:7897"
+os.environ["NO_PROXY"] = "localhost,127.0.0.1,0.0.0.0,192.168.0.0/16"
+#####
+
 from tool_server.tool_workers.online_workers.base_tool_worker import BaseToolWorker
 from tool_server.utils.server_utils import build_logger
 from transformers import AutoProcessor, AutoModelForImageTextToText

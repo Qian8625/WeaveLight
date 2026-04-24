@@ -12,6 +12,12 @@ from groundingdino.util import box_ops
 from tool_server.tool_workers.online_workers.base_tool_worker import BaseToolWorker
 from tool_server.utils.server_utils import build_logger
 
+##### network config   ---by wys
+os.environ["HTTP_PROXY"] = "http://10.31.215.24:7897"
+os.environ["HTTPS_PROXY"] = "http://10.31.215.24:7897"
+os.environ["NO_PROXY"] = "localhost,127.0.0.1,0.0.0.0,192.168.0.0/16"
+#####
+
 import groundingdino.datasets.transforms as T
 
 worker_id = str(uuid.uuid4())[:6]

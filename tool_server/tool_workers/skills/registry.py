@@ -1,7 +1,17 @@
+from pathlib import Path
+
+
+_SKILL_MD_DIR = Path(__file__).resolve().parent / "skill_md"
+
+
+def _skill_md_path(filename: str) -> str:
+    return str(_SKILL_MD_DIR / filename)
+
+
 SKILL_REGISTRY = {
     "TargetLocateMeasureSkill": {
         "executor_model": "TargetLocateMeasureSkill",
-        "md_path": "tool_server/tool_workers/skills/skill_md/TargetLocateMeasureSkill.md",
+        "md_path": _skill_md_path("TargetLocateMeasureSkill.md"),
         "required_inputs": ["image", "target", "mode"],
         "optional_inputs": [
             "reference_target",
@@ -21,7 +31,7 @@ SKILL_REGISTRY = {
     },
     "SARTargetLocateMeasureSkill": {
         "executor_model": "SARTargetLocateMeasureSkill",
-        "md_path": "tool_server/tool_workers/skills/skill_md/SARTargetLocateMeasureSkill.md",
+        "md_path": _skill_md_path("SARTargetLocateMeasureSkill.md"),
         "required_inputs": ["image", "target", "mode"],
         "optional_inputs": [
             "reference_target",
@@ -44,7 +54,7 @@ SKILL_REGISTRY = {
     },
     "TargetAttributeSkill": {
         "executor_model": "TargetAttributeSkill",
-        "md_path": "tool_server/tool_workers/skills/skill_md/TargetAttributeSkill.md",
+        "md_path": _skill_md_path("TargetAttributeSkill.md"),
         "required_inputs": ["image", "task_type"],
         "optional_inputs": [
             "target",
@@ -69,7 +79,7 @@ SKILL_REGISTRY = {
     },
     "ConditionalCountSkill": {
         "executor_model": "ConditionalCountSkill",
-        "md_path": "tool_server/tool_workers/skills/skill_md/ConditionalCountSkill.md",
+        "md_path": _skill_md_path("ConditionalCountSkill.md"),
         "required_inputs": ["image", "target", "condition"],
         "optional_inputs": [
             "bbox",
@@ -88,7 +98,7 @@ SKILL_REGISTRY = {
     },
     "MultConfirmSkill": {
         "executor_model": "MultConfirmSkill",
-        "md_path": "tool_server/tool_workers/skills/skill_md/MultConfirmSkill.md",
+        "md_path": _skill_md_path("MultConfirmSkill_worker.md"),
         "required_inputs": ["rgb_image", "sar_image", "target"],
         "optional_inputs": [
             "task_type",
@@ -113,7 +123,7 @@ SKILL_REGISTRY = {
     },
     "ChangeSummarySkill": {
         "executor_model": "ChangeSummarySkill",
-        "md_path": "tool_server/tool_workers/skills/skill_md/ChangeSummarySkill.md",
+        "md_path": _skill_md_path("ChangeSummarySkill.md"),
         "required_inputs": ["pre_image", "post_image"],
         "optional_inputs": ["task_type", "query", "target"],
         "defaults": {
@@ -123,7 +133,7 @@ SKILL_REGISTRY = {
     },
     "GeoTIFFPoiExploreSkill": {
         "executor_model": "GeoTIFFPoiExploreSkill",
-        "md_path": "tool_server/tool_workers/skills/skill_md/GeoTIFFPoiExploreSkill.md",
+        "md_path": _skill_md_path("GeoTIFFPoiExploreSkill.md"),
         "required_inputs": ["geotiff", "poi_specs"],
         "optional_inputs": [
             "task_type",
@@ -139,7 +149,7 @@ SKILL_REGISTRY = {
     },
     "GeoTIFFPoiDistanceSkill": {
         "executor_model": "GeoTIFFPoiDistanceSkill",
-        "md_path": "tool_server/tool_workers/skills/skill_md/GeoTIFFPoiDistanceSkill.md",
+        "md_path": _skill_md_path("GeoTIFFPoiDistanceSkill.md"),
         "required_inputs": ["geotiff", "poi_specs"],
         "optional_inputs": [
             "src_layer",

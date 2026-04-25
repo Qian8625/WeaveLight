@@ -148,9 +148,10 @@ class SkillRouter:
                 )
 
         # 5) skill-specific structure bonuses
-        score, bonus_reasons = self._apply_skill_specific_heuristics(
+        bonus, bonus_reasons = self._apply_skill_specific_heuristics(
             skill_name, query, input_registry
         )
+        score += bonus
         reasons.extend(bonus_reasons)
 
         return round(score, 3), reasons

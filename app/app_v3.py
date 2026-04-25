@@ -8,12 +8,19 @@ import inspect
 from PIL import Image
 from datetime import datetime
 import rasterio
+from pathlib import Path
 import numpy as np
 from tool_server.tool_workers.tool_manager.base_manager import ToolManager
 from tool_server.tf_eval.utils.rs_agent_prompt import RS_AGENT_PROMPT
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tool_server.tool_workers.skills.router import route_skills
 from tool_server.tool_workers.skills.catalog import build_selected_skill_catalog
+from tool_server.tool_workers.skills.registry import SKILL_REGISTRY
+# 修改输入文件的路径
+APP_FILE = Path(__file__).resolve()
+APP_DIR = APP_FILE.parent
+PROJECT_ROOT = APP_DIR.parent
+
 
 os.environ["GRADIO_TEMP_DIR"] = os.path.join(os.getcwd(), "app", "gradio_tmp")
 
@@ -95,6 +102,15 @@ TOOL_ARG_BINDINGS = {
     "TVDIAnalysis": {"ndvi_path": "ndvi_image", "lst_path": "lst_image"},
     "SARToRGB": {"image": "primary_image"},
     "SARPreprocessing": {"image": "primary_image"},
+}
+
+SKILL_INPUT_BINDINGS = {
+    "image": "primary_image",
+    "geotiff": "primary_image",
+    "pre_image": "time1_image",
+    "post_image": "time2_image",
+    "rgb_image": "primary_image",
+    "sar_image": "time1_image",
 }
 
 TOOL_DEFAULT_ARGUMENTS = {
@@ -204,15 +220,46 @@ def extract_thought_and_actions(text: str):
         actions = []
     return thought, actions
 
-
 def resolve_existing_file(path):
     if not path:
         return None
-    for candidate in [path, os.path.abspath(path), os.path.join(os.getcwd(), path)]:
-        if os.path.isfile(candidate):
-            return candidate
+
+    p = Path(str(path)).expanduser()
+
+    if p.is_absolute():
+        candidates = [p]
+    else:
+        candidates = [
+            Path.cwd() / p,
+            PROJECT_ROOT / p,
+            APP_DIR / p,
+        ]
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+
     return None
 
+def inject_skill_runtime_arguments(injected_args, registry):
+    merged = dict(injected_args or {})
+    skill_name = merged.get("skill_name")
+
+    if not skill_name or skill_name not in SKILL_REGISTRY:
+        return merged
+
+    spec = SKILL_REGISTRY[skill_name]
+    input_names = list(spec.get("required_inputs", [])) + list(spec.get("optional_inputs", []))
+
+    for arg_name in input_names:
+        if merged.get(arg_name) not in [None, ""]:
+            continue
+
+        registry_key = SKILL_INPUT_BINDINGS.get(arg_name)
+        if registry_key and registry.get(registry_key):
+            merged[arg_name] = registry[registry_key]
+
+    return merged
 
 def make_preview_if_tif(path):
     if not path:
@@ -532,8 +579,37 @@ def update_registry_with_tool_response(registry, api_name, tool_resp, round_id=N
     if not isinstance(tool_resp, dict):
         return registry
 
+    if tool_resp.get("error_code") != 0:
+        return registry
+
     registry = dict(registry)
 
+    # 1) Prefer normalized artifacts returned by SkillExecutor
+    artifacts = tool_resp.get("artifacts")
+    if isinstance(artifacts, list):
+        for idx, item in enumerate(artifacts, start=1):
+            if not isinstance(item, dict):
+                continue
+
+            path = item.get("path")
+            artifact_type = item.get("type") or "other"
+            artifact_id = item.get("id") or f"round_{round_id}_{api_name.lower()}_{idx}"
+
+            if not path:
+                continue
+
+            # 保持当前 registry 命名习惯，避免不同 round 的 id 冲突
+            scoped_artifact_id = f"round_{round_id}_{api_name.lower()}_{artifact_id}"
+
+            registry = register_artifact(
+                registry,
+                artifact_id=scoped_artifact_id,
+                path=path,
+                artifact_type=artifact_type,
+                tool_name=api_name,
+            )
+
+    # 2) Backward-compatible fallback for old tool outputs
     visual = detect_output_visual(tool_resp)
     if visual:
         artifact_id = f"round_{round_id}_{api_name.lower()}_image"
@@ -784,6 +860,11 @@ def run_agent(user_question, *flat_args):
         api_args = raw_args if isinstance(raw_args, dict) else {}
         api_args = resolve_argument_references(api_args, registry)  
 
+        if api_name in SKILL_REGISTRY:
+            api_args = dict(api_args or {})
+            api_args["skill_name"] = api_name
+            api_name = "SkillExecutor"
+
         unresolved_refs = find_unresolved_references(api_args)
         if unresolved_refs:
             chat_msgs.append(
@@ -837,7 +918,11 @@ def run_agent(user_question, *flat_args):
                 chat_msgs.append(
                     {
                         "role": "assistant",
-                        "content": f"[Round {round_id}] ❌Observation\n There are currently no available skills matched. Please do not use SkillExecutor, but directly select the appropriate raw tools.",
+                        "content": (
+                            f"[Round {round_id}] ❌ Observation\n"
+                            "There are currently no available skills matched. "
+                            "Please do not use SkillExecutor, but directly select the appropriate raw tools."
+                        ),
                     }
                 )
                 yield emit(None)
@@ -854,9 +939,12 @@ def run_agent(user_question, *flat_args):
                 )
                 continue
 
-            # 情况2：有候选 skill，但模型没填 skill_name，可以自动补第一个候选
+            # 情况2：有候选 skill，但模型没填 skill_name，自动补第一个候选
             if not injected_args.get("skill_name"):
                 injected_args["skill_name"] = candidate_skills[0]["skill_name"]
+
+            # 关键新增：根据 skill registry 自动补上传输入
+            injected_args = inject_skill_runtime_arguments(injected_args, registry)
 
         action_media = collect_action_input_media(injected_args)
         chat_msgs.append(
@@ -875,7 +963,7 @@ def run_agent(user_question, *flat_args):
 
         tool_resp = normalize_tool_response(raw_tool_resp, api_name)
         obs_text = tool_resp.get("text", "")
-        if "gpkg" in tool_resp:
+        if tool_resp.get("error_code") == 0 and "gpkg" in tool_resp:
             current_gpkg = tool_resp.get("gpkg")
 
         registry = update_registry_with_tool_response(
@@ -1881,6 +1969,25 @@ with gr.Blocks(**blocks_kwargs) as demo:
                                         preprocess=False,
                                     )
                                 with gr.Tab("TimeSeries Analyze"):
+                                    gr.Examples(
+                                        examples=[
+                                            make_example(
+                                                "Visualize all museums and malls over the given GeoTIFF image, compute the distance between the closest pair, and finally annotate the image with this distance.", 
+                                                primary_image="./assets/S_10_preview.png"
+                                                ),
+                                            make_example(
+                                                "List all the damaged buildings in the post-disaster image..",
+                                                time1_image="./assets/TG_santa-rosa-wildfire_00000102_pre_disaster.png",
+                                                time2_image="./assets/TG_santa-rosa-wildfire_00000102_post_disaster.png"
+                                            ),
+                                            make_example(
+                                                "Find remote sensing images from June 2024, output the number of images, and describe the last image",
+                                            ),
+                                        ],
+                                        inputs=example_inputs,
+                                        preprocess=False,
+                                    )
+                                with gr.Tab("Skill Test"):
                                     gr.Examples(
                                         examples=[
                                             make_example(

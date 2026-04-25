@@ -82,16 +82,23 @@ ROUTER_RULES = {
             "geotiff", "兴趣点", "医院", "博物馆", "商场", "周边", "是否存在", "可视化"
         ],
         "negative_keywords": [
-            "distance between poi", "nearest poi",
-            "最近距离", "poi距离"
+            "distance between poi",
+            "nearest poi",
+            "closest pair",
+            "compute distance",
+            "最近距离",
+            "poi距离",
+            "距离"
         ],
         "preferred_inputs": ["primary_image"],
         "required_modalities": ["geotiff"],
     },
     "GeoTIFFPoiDistanceSkill": {
         "keywords": [
-            "geotiff", "poi distance", "nearest", "distance between poi", "closest",
-            "最近距离", "poi距离", "两类poi", "最近"
+            "geotiff", "poi distance", "nearest", "closest",
+            "distance between poi", "closest pair", "compute distance",
+            "distance between", "between the closest pair",
+            "最近距离", "poi距离", "两类poi", "最近", "距离"
         ],
         "negative_keywords": [
             "change", "sar", "single target detection",

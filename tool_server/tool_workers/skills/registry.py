@@ -12,6 +12,7 @@ SKILL_REGISTRY = {
     "TargetLocateMeasureSkill": {
         "executor_model": "TargetLocateMeasureSkill",
         "md_path": _skill_md_path("TargetLocateMeasureSkill.md"),
+        "normalizer": "target_locate_measure",
         "required_inputs": ["image", "target", "mode"],
         "optional_inputs": [
             "reference_target",
@@ -32,6 +33,7 @@ SKILL_REGISTRY = {
     "SARTargetLocateMeasureSkill": {
         "executor_model": "SARTargetLocateMeasureSkill",
         "md_path": _skill_md_path("SARTargetLocateMeasureSkill.md"),
+        "normalizer": "sar_target_locate_measure",
         "required_inputs": ["image", "target", "mode"],
         "optional_inputs": [
             "reference_target",
@@ -56,6 +58,7 @@ SKILL_REGISTRY = {
         "executor_model": "TargetAttributeSkill",
         "md_path": _skill_md_path("TargetAttributeSkill.md"),
         "required_inputs": ["image", "task_type"],
+        "normalizer": "target_attribute",
         "optional_inputs": [
             "target",
             "attribute",
@@ -80,6 +83,7 @@ SKILL_REGISTRY = {
     "ConditionalCountSkill": {
         "executor_model": "ConditionalCountSkill",
         "md_path": _skill_md_path("ConditionalCountSkill.md"),
+        "normalizer": "conditional_count",
         "required_inputs": ["image", "target", "condition"],
         "optional_inputs": [
             "bbox",
@@ -99,6 +103,7 @@ SKILL_REGISTRY = {
     "MultConfirmSkill": {
         "executor_model": "MultConfirmSkill",
         "md_path": _skill_md_path("MultConfirmSkill_worker.md"),
+        "normalizer": "mult_confirm",
         "required_inputs": ["rgb_image", "sar_image", "target"],
         "optional_inputs": [
             "task_type",
@@ -124,6 +129,7 @@ SKILL_REGISTRY = {
     "ChangeSummarySkill": {
         "executor_model": "ChangeSummarySkill",
         "md_path": _skill_md_path("ChangeSummarySkill.md"),
+        "normalizer": "change_summary",
         "required_inputs": ["pre_image", "post_image"],
         "optional_inputs": ["task_type", "query", "target"],
         "defaults": {
@@ -134,6 +140,7 @@ SKILL_REGISTRY = {
     "GeoTIFFPoiExploreSkill": {
         "executor_model": "GeoTIFFPoiExploreSkill",
         "md_path": _skill_md_path("GeoTIFFPoiExploreSkill.md"),
+        "normalizer": "geotiff_poi_explore",
         "required_inputs": ["geotiff", "poi_specs"],
         "optional_inputs": [
             "task_type",
@@ -150,6 +157,7 @@ SKILL_REGISTRY = {
     "GeoTIFFPoiDistanceSkill": {
         "executor_model": "GeoTIFFPoiDistanceSkill",
         "md_path": _skill_md_path("GeoTIFFPoiDistanceSkill.md"),
+        "normalizer": "geotiff_poi_distance",
         "required_inputs": ["geotiff", "poi_specs"],
         "optional_inputs": [
             "src_layer",

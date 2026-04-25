@@ -17,7 +17,6 @@ import os
 import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
-
 import requests
 
 from tool_server.tool_workers.online_workers.base_tool_worker import BaseToolWorker
